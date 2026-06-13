@@ -1,9 +1,15 @@
 # 宝塔面板 (BT Panel) 部署步骤
 #
 # 假设你已经在宝塔里：
-#   1) 装了 Node.js 版本管理器（>= Node 18）
+#   1) 装了 Node.js 版本管理器（>= Node 18，建议 v20 LTS）
 #   2) 申请并部署了 npm.yunmiao.site 的证书
 #   3) 有 sudo 权限的 yunmiao 用户
+#
+# ===== 0. 选端口 =====
+#
+# 默认 3000。可以用 ss/netstat/lsof 看看是否被占：
+#   ss -ltn | grep :3000
+# 3000 被占就把下面的 3000 换成 3030 之类。
 #
 # ===== 1. 上传代码 =====
 #
@@ -23,7 +29,7 @@
 #   sudo mkdir -p /etc/mcp-all-in-one
 #   sudo cp /opt/mcp-all-in-one/deploy/baota/mcp-all-in-one.env.example \
 #           /etc/mcp-all-in-one/mcp-all-in-one.env
-#   sudo vim /etc/mcp-all-in-one/mcp-all-in-one.env   # 填 AUTH_TOKEN 和 TAVILY_API_KEY
+#   sudo vim /etc/mcp-all-in-one/mcp-all-in-one.env   # 填 AUTH_TOKEN 和 TAVILY_API_KEY，注意 PORT
 #   sudo chmod 600 /etc/mcp-all-in-one/mcp-all-in-one.env
 #   sudo chown root:root /etc/mcp-all-in-one/mcp-all-in-one.env
 #
@@ -34,7 +40,7 @@
 #     - 路径:      /opt/mcp-all-in-one
 #     - 启动文件:  build/index.js
 #     - 启动选项:  http
-#     - 端口:      3000
+#     - 端口:      3000 （与 env 里的 PORT 保持一致）
 #     - 运行环境:  production
 #
 #   ⚠️ 关键：宝塔 Node 项目管理器的「启动选项」是拼到启动命令后面的，
@@ -55,6 +61,7 @@
 #
 #   宝塔 -> 网站 -> npm.yunmiao.site -> 配置文件
 #   把 deploy/baota/mcp-all-in-one.nginx.conf 的内容追加进去（或替换 location / 部分）
+#   注意把里面的 127.0.0.1:3000 改成你选定的端口。
 #   宝塔自带重载 Nginx 按钮即可。
 #
 # ===== 5. 验证 =====
