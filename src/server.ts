@@ -80,23 +80,22 @@ export async function runHttpServer(options: HttpServerOptions): Promise<void> {
   const messageEndpoint = options.messageEndpoint ?? "/messages";
 
   // Streamable HTTP (2025-03) transport. State kept per session.
+  // NOTE: the MCP Server instance can only be connected to ONE transport
+  // at a time, so Streamable HTTP and legacy SSE need separate Server
+  // instances.
   const streamableTransport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
   });
   const streamableServer = createMcpServer();
   await streamableServer.connect(streamableTransport);
 
-  // Legacy SSE (2024-11) — one server per SSE session, since each
-  // SSEServerTransport binds to a single HTTP response stream.
-  const sseSessions = new Map<string, SSEServerTransport>();
-  let sseServer: Server | null = null;
-
-  async function ensureSseServer(): Promise<Server> {
-    if (!sseServer) {
-      sseServer = createMcpServer();
-    }
-    return sseServer;
+  // Legacy SSE (2024-11). One Server per session, since SSE binds the
+  // Server's lifetime to the HTTP response stream.
+  interface SseSession {
+    server: Server;
+    transport: SSEServerTransport;
   }
+  const sseSessions = new Map<string, SseSession>();
 
   const httpServer = createServer((req, res) => {
     void handleHttpRequest(req, res, options, {
@@ -104,7 +103,6 @@ export async function runHttpServer(options: HttpServerOptions): Promise<void> {
       sseEndpoint,
       messageEndpoint,
       streamableTransport,
-      ensureSseServer,
       sseSessions,
     });
   });
@@ -122,10 +120,10 @@ export async function runHttpServer(options: HttpServerOptions): Promise<void> {
     httpServer.close();
     await streamableTransport.close();
     await streamableServer.close();
-    for (const t of sseSessions.values()) {
-      await t.close();
+    for (const { server, transport } of sseSessions.values()) {
+      await transport.close();
+      await server.close();
     }
-    if (sseServer) await sseServer.close();
     process.exit(0);
   };
 
@@ -138,8 +136,7 @@ interface HandleContext {
   sseEndpoint: string;
   messageEndpoint: string;
   streamableTransport: StreamableHTTPServerTransport;
-  ensureSseServer: () => Promise<Server>;
-  sseSessions: Map<string, SSEServerTransport>;
+  sseSessions: Map<string, { server: Server; transport: SSEServerTransport }>;
 }
 
 function setCors(res: ServerResponse): void {
@@ -217,17 +214,19 @@ async function handleHttpRequest(
     if (!checkAuth(req, res, options.authToken)) return;
     setCors(res);
 
+    const server = createMcpServer();
     const transport = new SSEServerTransport(ctx.messageEndpoint, res);
-    const server = await ctx.ensureSseServer();
     await server.connect(transport);
-    ctx.sseSessions.set(transport.sessionId, transport);
+    ctx.sseSessions.set(transport.sessionId, { server, transport });
 
     transport.onclose = () => {
-      ctx.sseSessions.delete(transport.sessionId);
+      const session = ctx.sseSessions.get(transport.sessionId);
+      if (session) {
+        ctx.sseSessions.delete(transport.sessionId);
+        void session.server.close();
+      }
     };
 
-    // Streamable HTTP requires the `res` to NOT be ended; SSEServerTransport
-    // calls res.end() on close. Nothing else to do here.
     return;
   }
 
@@ -242,13 +241,13 @@ async function handleHttpRequest(
       res.end(JSON.stringify({ error: "Missing sessionId query param" }));
       return;
     }
-    const transport = ctx.sseSessions.get(sessionId);
-    if (!transport) {
+    const session = ctx.sseSessions.get(sessionId);
+    if (!session) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Unknown or expired sessionId" }));
       return;
     }
-    await transport.handlePostMessage(req, res);
+    await session.transport.handlePostMessage(req, res);
     return;
   }
 
