@@ -58,7 +58,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  loadDotenv();
+  // load .env only if a path is explicitly set, to avoid silently shadowing
+  // environment variables that were passed in (e.g. by systemd / a process manager).
+  if (process.env.DOTENV_PATH) {
+    loadDotenv({ path: process.env.DOTENV_PATH, override: true });
+  }
 
   const opts = parseArgs(process.argv);
 
