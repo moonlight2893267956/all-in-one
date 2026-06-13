@@ -46,98 +46,45 @@ TAVILY_API_KEY=tvly-... node build/index.js
 Architecture:
 
 ```
-[Claude Desktop]  ──HTTPS──>  [Nginx :443]  ──>  [mcp-all-in-one :3000 (127.0.0.1)]
-                                                  (systemd)
+[Claude Desktop]  ──HTTPS──>  [宝塔 Nginx :443]  ──>  [mcp-all-in-one :3000 (127.0.0.1)]
+                                                  (宝塔 Node 项目管理器)
 ```
 
-### 1. Server prerequisites
+### 宝塔面板部署
 
-- Node.js ≥ 18
-- Nginx
-- (optional) Certbot for Let's Encrypt
-
-### 2. Install the app
+完整步骤见 [`deploy/baota/README.md`](deploy/baota/README.md)。简要版：
 
 ```bash
-sudo mkdir -p /opt/mcp-all-in-one
-sudo chown -R $USER:$USER /opt/mcp-all-in-one
+# 1. 上传 / 克隆代码
+ssh yunmiao@81.70.216.46
+sudo mkdir -p /opt/mcp-all-in-one && sudo chown $USER:$USER /opt/mcp-all-in-one
 cd /opt/mcp-all-in-one
 git clone git@github.com:moonlight2893267956/all-in-one.git .
-npm ci --omit=dev
-npm run build
-```
+npm ci --omit=dev && npm run build
 
-### 3. Configure environment
-
-```bash
-sudo mkdir -p /etc/mcp-all-in-one
-sudo cp deploy/systemd/mcp-all-in-one.env.example /etc/mcp-all-in-one/mcp-all-in-one.env
-sudo vim /etc/mcp-all-in-one/mcp-all-in-one.env   # fill in AUTH_TOKEN, TAVILY_API_KEY
-```
-
-Generate a strong token:
-
-```bash
-openssl rand -hex 32
-```
-
-Lock down the file:
-
-```bash
+# 2. 环境变量
+sudo cp deploy/baota/mcp-all-in-one.env.example /etc/mcp-all-in-one/mcp-all-in-one.env
+sudo vim /etc/mcp-all-in-one/mcp-all-in-one.env   # 填 AUTH_TOKEN / TAVILY_API_KEY
 sudo chmod 600 /etc/mcp-all-in-one/mcp-all-in-one.env
-sudo chown root:www-data /etc/mcp-all-in-one/mcp-all-in-one.env
-```
 
-### 4. Install the systemd service
+# 3. 宝塔面板 -> 网站 -> 添加 Node 项目
+#    路径: /opt/mcp-all-in-one  启动文件: build/index.js
+#    启动选项: http   端口: 3000
+#    「环境变量」字段直接贴 /etc/mcp-all-in-one/mcp-all-in-one.env 的内容
+#    或者启动命令改为：
+#      bash -c 'set -a; source /etc/mcp-all-in-one/mcp-all-in-one.env; set +a; \
+#               exec node build/index.js http'
 
-```bash
-sudo cp deploy/systemd/mcp-all-in-one.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now mcp-all-in-one
-sudo systemctl status mcp-all-in-one
-sudo journalctl -u mcp-all-in-one -f
-```
+# 4. 宝塔 -> 网站 -> npm.yunmiao.site -> 配置文件
+#    把 deploy/baota/mcp-all-in-one.nginx.conf 里的 location /mcp 和 /health 追加进去
 
-### 5. Install Nginx + TLS
-
-```bash
-# Issue cert first
-sudo certbot --nginx -d npm.yunmiao.site
-
-# Then install the vhost
-sudo cp deploy/nginx/mcp-all-in-one.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/mcp-all-in-one.conf /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-### 6. Verify
-
-```bash
-# Health check (no auth)
+# 5. 验证
 curl https://npm.yunmiao.site/health
-# {"status":"ok","version":"1.0.0"}
-
-# MCP initialize (with auth)
-curl -X POST https://npm.yunmiao.site/mcp \
-  -H "Authorization: Bearer $AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0.0.1"}}}'
 ```
 
-### 7. Update / re-deploy
+### 非宝塔 / 裸机部署
 
-From the server:
-
-```bash
-bash /opt/mcp-all-in-one/deploy/scripts/deploy.sh
-```
-
-Or from local:
-
-```bash
-ssh user@host 'bash -s' < deploy/scripts/deploy.sh
-```
+如果服务器没有宝塔，用 `deploy/alt/systemd/` 里的 systemd unit + `deploy/alt/systemd/` 旁边的 nginx 模板。
 
 ## Client config (remote HTTP)
 
