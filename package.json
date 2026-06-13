@@ -1,0 +1,35 @@
+{
+  "name": "mcp-all-in-one",
+  "version": "1.0.0",
+  "description": "Multi-tool MCP server - unified tool service framework",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "mcp-all-in-one": "build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "tavily",
+    "search"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "dotenv": "^17.4.2",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

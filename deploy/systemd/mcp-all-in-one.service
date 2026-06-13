@@ -1,0 +1,31 @@
+# 复制到 /etc/systemd/system/mcp-all-in-one.service 后执行：
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable mcp-all-in-one
+#   sudo systemctl start mcp-all-in-one
+#   sudo systemctl status mcp-all-in-one
+#   sudo journalctl -u mcp-all-in-one -f
+
+[Unit]
+Description=MCP All-in-One Server (Streamable HTTP)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/mcp-all-in-one
+EnvironmentFile=/etc/mcp-all-in-one/mcp-all-in-one.env
+ExecStart=/usr/bin/node /opt/mcp-all-in-one/build/index.js http
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/mcp-all-in-one
+
+[Install]
+WantedBy=multi-user.target
