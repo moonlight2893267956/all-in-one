@@ -36,10 +36,12 @@ export async function cosUploadBuffer(
   buf: Buffer,
   key: string,
   contentType?: string,
-  config?: CosConfig
-): Promise<{ etag: string; size: number; versionId?: string }> {
+  config?: CosConfig,
+  options: { acl?: "private" | "public-read" } = {}
+): Promise<{ etag: string; size: number; versionId?: string; acl: string }> {
   const cfg = config ?? loadConfig();
   const client = getCosClient(cfg);
+  const acl = options.acl ?? "public-read";
   return new Promise((resolve, reject) => {
     client.putObject(
       {
@@ -48,6 +50,7 @@ export async function cosUploadBuffer(
         Key: key,
         Body: buf,
         ContentLength: buf.length,
+        ACL: acl,
         ...(contentType ? { ContentType: contentType } : {}),
       },
       (err, data) => {
@@ -56,6 +59,7 @@ export async function cosUploadBuffer(
           etag: data.ETag ?? "",
           size: buf.length,
           versionId: data.VersionId,
+          acl,
         });
       }
     );
@@ -65,11 +69,12 @@ export async function cosUploadBuffer(
 export async function cosUploadFile(
   localPath: string,
   key: string,
-  config?: CosConfig
-): Promise<{ etag: string; size: number; versionId?: string }> {
+  config?: CosConfig,
+  options: { acl?: "private" | "public-read" } = {}
+): Promise<{ etag: string; size: number; versionId?: string; acl: string }> {
   const fs = await import("node:fs/promises");
   const buf = await fs.readFile(localPath);
-  return cosUploadBuffer(buf, key, undefined, config);
+  return cosUploadBuffer(buf, key, undefined, config, options);
 }
 
 export async function cosDownloadToFile(

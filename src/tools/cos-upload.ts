@@ -37,6 +37,12 @@ const UploadInput = z.object({
     .string()
     .optional()
     .describe("MIME type (auto-detected for common extensions if omitted)"),
+  acl: z
+    .enum(["private", "public-read"])
+    .default("public-read")
+    .describe(
+      "Object ACL. 'public-read' lets anyone fetch the returned URL; 'private' requires a presigned URL."
+    ),
 });
 
 export const cosUploadTool = {
@@ -66,6 +72,12 @@ export const cosUploadTool = {
         default: "STANDARD",
       },
       content_type: { type: "string", description: "MIME type override" },
+      acl: {
+        type: "string",
+        enum: ["private", "public-read"],
+        default: "public-read",
+        description: "Object ACL. public-read lets anyone fetch the URL.",
+      },
     },
     required: ["cos_key"],
   },
@@ -84,32 +96,41 @@ export const cosUploadTool = {
     let etag: string;
     let size: number;
     let versionId: string | undefined;
+    let acl: string;
     let contentType = parsed.content_type;
 
     if (parsed.local_path) {
-      const fs = await import("node:fs/promises");
       const path = await import("node:path");
       if (!contentType) {
         const ext = path.extname(parsed.local_path).toLowerCase();
         contentType = guessMimeType(ext);
       }
-      const r = await cosUploadFile(parsed.local_path, parsed.cos_key, config);
+      const r = await cosUploadFile(parsed.local_path, parsed.cos_key, config, {
+        acl: parsed.acl,
+      });
       etag = r.etag;
       size = r.size;
       versionId = r.versionId;
+      acl = r.acl;
     } else if (parsed.content_base64) {
       const buf = Buffer.from(parsed.content_base64, "base64");
-      const r = await cosUploadBuffer(buf, parsed.cos_key, contentType, config);
+      const r = await cosUploadBuffer(buf, parsed.cos_key, contentType, config, {
+        acl: parsed.acl,
+      });
       etag = r.etag;
       size = r.size;
       versionId = r.versionId;
+      acl = r.acl;
     } else {
       const buf = Buffer.from(parsed.content_text ?? "", "utf8");
       if (!contentType) contentType = "text/plain; charset=utf-8";
-      const r = await cosUploadBuffer(buf, parsed.cos_key, contentType, config);
+      const r = await cosUploadBuffer(buf, parsed.cos_key, contentType, config, {
+        acl: parsed.acl,
+      });
       etag = r.etag;
       size = r.size;
       versionId = r.versionId;
+      acl = r.acl;
     }
 
     return [
@@ -120,6 +141,7 @@ export const cosUploadTool = {
       `ETag: ${etag}`,
       versionId ? `VersionId: ${versionId}` : null,
       `Content-Type: ${contentType ?? "(default)"}`,
+      `ACL: ${acl}`,
       `URL: ${buildPublicUrl(parsed.cos_key, config)}`,
     ]
       .filter(Boolean)

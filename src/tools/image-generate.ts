@@ -67,18 +67,25 @@ const InputSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Absolute path on the server to write the image. If omitted, writes to /tmp/mcp-images/<timestamp>.png."
+      "Absolute path on the server to write the image. If omitted, writes to /tmp/mcp-images/<timestamp>.<ext>."
     ),
   upload_to_cos: z
     .boolean()
-    .default(false)
+    .default(true)
     .describe(
-      "If true, also upload the generated image to the configured COS bucket and include the URL."
+      "If true (default), also upload the generated image to the configured COS bucket and " +
+        "return the public URL. Set to false to keep the file only on the server."
     ),
   cos_key: z
     .string()
     .optional()
-    .describe("COS object key when upload_to_cos is true. Defaults to mcp-images/<basename>."),
+    .describe(
+      "COS object key when upload_to_cos is true. Defaults to mcp-images/<basename>."
+    ),
+  cos_acl: z
+    .enum(["private", "public-read"])
+    .default("public-read")
+    .describe("ACL applied to the uploaded COS object. public-read lets the URL work directly."),
 });
 
 function pickProvider(explicit?: "siliconflow" | "dashscope"): "siliconflow" | "dashscope" {
@@ -211,16 +218,23 @@ export const imageGenerateTool = {
       save_to: {
         type: "string",
         description:
-          "Absolute path on the server. Defaults to /tmp/mcp-images/<timestamp>.png.",
+          "Absolute path on the server. Defaults to /tmp/mcp-images/<timestamp>.<ext>.",
       },
       upload_to_cos: {
         type: "boolean",
-        default: false,
-        description: "If true, also upload the image to COS and include the URL.",
+        default: true,
+        description:
+          "If true (default), uploads to COS and returns the public URL. Set false to skip.",
       },
       cos_key: {
         type: "string",
-        description: "COS object key when upload_to_cos is true.",
+        description: "COS object key. Defaults to mcp-images/<basename>.",
+      },
+      cos_acl: {
+        type: "string",
+        enum: ["private", "public-read"],
+        default: "public-read",
+        description: "ACL for the uploaded object. public-read makes the URL directly accessible.",
       },
     },
     required: ["prompt"],
@@ -259,8 +273,9 @@ export const imageGenerateTool = {
     }
     const buf = Buffer.from(await resp.arrayBuffer());
 
-    const saveTo =
-      parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.png`;
+    const fallbackName = parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.png`;
+    const ext = guessImageExtension(resp.headers.get("content-type"), fallbackName);
+    const saveTo = parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.${ext}`;
     await mkdir(dirname(saveTo), { recursive: true });
     await writeFile(saveTo, buf);
 
@@ -273,13 +288,17 @@ export const imageGenerateTool = {
     ];
 
     if (parsed.upload_to_cos) {
-      const { cosKey, publicUrl } = await uploadToCos(
+      const { cosKey, publicUrl, acl } = await uploadToCos(
         buf,
         saveTo,
-        parsed.cos_key
+        parsed.cos_key,
+        parsed.cos_acl
       );
       lines.push(`COS key: ${cosKey}`);
+      lines.push(`COS ACL: ${acl}`);
       lines.push(`COS URL: ${publicUrl}`);
+    } else {
+      lines.push(`(upload_to_cos=false; COS upload skipped)`);
     }
 
     return lines.join("\n");
@@ -289,11 +308,26 @@ export const imageGenerateTool = {
 async function uploadToCos(
   buf: Buffer,
   saveTo: string,
-  cosKeyOverride?: string
-): Promise<{ cosKey: string; publicUrl: string }> {
+  cosKeyOverride: string | undefined,
+  acl: "private" | "public-read"
+): Promise<{ cosKey: string; publicUrl: string; acl: string }> {
   const { cosUploadBuffer, buildPublicUrl } = await import("./cos-client.js");
   const cosKey =
     cosKeyOverride ?? `mcp-images/${saveTo.split("/").pop() ?? "image.png"}`;
-  await cosUploadBuffer(buf, cosKey);
-  return { cosKey, publicUrl: buildPublicUrl(cosKey) };
+  const r = await cosUploadBuffer(buf, cosKey, undefined, undefined, { acl });
+  return { cosKey, publicUrl: buildPublicUrl(cosKey), acl: r.acl };
+}
+
+function guessImageExtension(
+  contentType: string | null,
+  fallbackPath: string
+): string {
+  if (contentType) {
+    if (contentType.includes("jpeg")) return "jpg";
+    if (contentType.includes("png")) return "png";
+    if (contentType.includes("webp")) return "webp";
+    if (contentType.includes("gif")) return "gif";
+  }
+  const m = fallbackPath.match(/\.([a-zA-Z0-9]+)$/);
+  return m ? m[1].toLowerCase() : "png";
 }
