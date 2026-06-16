@@ -15,6 +15,12 @@ Supports two transports:
 | --- | --- |
 | `tavily_search` | Web search via the Tavily API (basic / advanced depth, optional AI summary) |
 | `current_date` | Returns the current date / time / timestamp in a configurable IANA timezone |
+| `image_understand` | Vision-language understanding of an image (DashScope qwen3-vl-flash / qwen-vl-plus / qwen-vl-max) |
+| `image_generate` | Text-to-image generation (SiliconFlow Kolors/FLUX/SD3.5 or DashScope qwen-image/wan2.7) |
+| `cos_upload` | Upload a file, base64, or text blob to Tencent Cloud COS |
+| `cos_download` | Download a COS object to the server filesystem |
+| `cos_list` | List objects in a COS bucket (with prefix filter) |
+| `cos_delete` | Delete one or more COS objects |
 
 ## Quick start (local, stdio)
 
@@ -129,10 +135,18 @@ deploy/
 | Var | Default | Used in |
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | HTTP transport |
-| `PORT` | `3000` | HTTP transport |
+| `PORT` | `3030` | HTTP transport |
 | `MCP_ENDPOINT` | `/mcp` | HTTP transport |
 | `AUTH_TOKEN` | _(unset)_ | HTTP transport — required in production |
 | `TAVILY_API_KEY` | _(unset)_ | `tavily_search` tool |
+| `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | _(unset)_ | `image_understand`, `image_generate` |
+| `DASHSCOPE_IMAGE_MODEL` | `qwen-image-2.0-pro` | `image_generate` (provider=dashscope) |
+| `SILICONFLOW_API_KEY` | _(unset)_ | `image_generate` (provider=siliconflow) |
+| `SILICONFLOW_IMAGE_MODEL` | `Kwai-Kolors/Kolors` | `image_generate` (provider=siliconflow) |
+| `COS_SECRET_ID` / `COS_SECRET_KEY` | _(unset)_ | all 4 `cos_*` tools |
+| `COS_BUCKET` | _(unset)_ | all 4 `cos_*` tools |
+| `COS_REGION` | _(unset)_ | all 4 `cos_*` tools |
+| `COS_PUBLIC_HOST` | _(unset)_ | public URL returned by `cos_upload` / `image_generate` |
 
 ## License
 
