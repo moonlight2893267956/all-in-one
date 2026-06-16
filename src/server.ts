@@ -10,6 +10,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { tools } from "./tools/index.js";
 
+const SESSION_TTL_MS = 1000 * 60 * 30; // 30 min idle
+
 function createMcpServer(): Server {
   const server = new Server(
     {
@@ -74,35 +76,77 @@ export interface HttpServerOptions {
   messageEndpoint?: string;
 }
 
+interface StreamableSession {
+  server: Server;
+  transport: StreamableHTTPServerTransport;
+  lastUsed: number;
+}
+
+interface SseSession {
+  server: Server;
+  transport: SSEServerTransport;
+}
+
 export async function runHttpServer(options: HttpServerOptions): Promise<void> {
   const endpoint = options.endpoint ?? "/mcp";
   const sseEndpoint = options.sseEndpoint ?? "/sse";
   const messageEndpoint = options.messageEndpoint ?? "/messages";
 
-  // Streamable HTTP (2025-03) transport. State kept per session.
-  // NOTE: the MCP Server instance can only be connected to ONE transport
-  // at a time, so Streamable HTTP and legacy SSE need separate Server
-  // instances.
-  const streamableTransport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
-  const streamableServer = createMcpServer();
-  await streamableServer.connect(streamableTransport);
+  // Per-session Streamable HTTP transport pool. The SDK only allows
+  // Server.connect(transport) once, and a transport that has been
+  // initialized cannot be re-initialized — so each client session
+  // needs its own (Server, transport) pair.
+  const streamableSessions = new Map<string, StreamableSession>();
 
   // Legacy SSE (2024-11). One Server per session, since SSE binds the
   // Server's lifetime to the HTTP response stream.
-  interface SseSession {
-    server: Server;
-    transport: SSEServerTransport;
-  }
   const sseSessions = new Map<string, SseSession>();
+
+  function gcStreamableSessions(): void {
+    const now = Date.now();
+    for (const [sid, sess] of streamableSessions) {
+      if (now - sess.lastUsed > SESSION_TTL_MS) {
+        streamableSessions.delete(sid);
+        void sess.transport.close().catch(() => {});
+        void sess.server.close().catch(() => {});
+      }
+    }
+  }
+  setInterval(gcStreamableSessions, SESSION_TTL_MS / 2).unref();
+
+  async function getOrCreateStreamableSession(
+    sessionId: string | undefined
+  ): Promise<{ sessionId: string; session: StreamableSession; created: boolean }> {
+    if (sessionId && streamableSessions.has(sessionId)) {
+      const session = streamableSessions.get(sessionId)!;
+      session.lastUsed = Date.now();
+      return { sessionId, session, created: false };
+    }
+    // Create a new session
+    const newId = randomUUID();
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => newId,
+      onsessioninitialized: (sid) => {
+        // The transport assigns its own session id (which is the same as newId
+        // in stateful mode). Register it for routing subsequent requests.
+        const s = streamableSessions.get(sid);
+        if (s) s.lastUsed = Date.now();
+      },
+    });
+    await server.connect(transport);
+    const session: StreamableSession = { server, transport, lastUsed: Date.now() };
+    streamableSessions.set(newId, session);
+    return { sessionId: newId, session, created: true };
+  }
 
   const httpServer = createServer((req, res) => {
     void handleHttpRequest(req, res, options, {
       endpoint,
       sseEndpoint,
       messageEndpoint,
-      streamableTransport,
+      streamableSessions,
+      getOrCreateStreamableSession,
       sseSessions,
     });
   });
@@ -118,11 +162,13 @@ export async function runHttpServer(options: HttpServerOptions): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.error("Shutting down HTTP server...");
     httpServer.close();
-    await streamableTransport.close();
-    await streamableServer.close();
-    for (const { server, transport } of sseSessions.values()) {
-      await transport.close();
-      await server.close();
+    for (const sess of streamableSessions.values()) {
+      await sess.transport.close().catch(() => {});
+      await sess.server.close().catch(() => {});
+    }
+    for (const sess of sseSessions.values()) {
+      await sess.transport.close().catch(() => {});
+      await sess.server.close().catch(() => {});
     }
     process.exit(0);
   };
@@ -135,8 +181,11 @@ interface HandleContext {
   endpoint: string;
   sseEndpoint: string;
   messageEndpoint: string;
-  streamableTransport: StreamableHTTPServerTransport;
-  sseSessions: Map<string, { server: Server; transport: SSEServerTransport }>;
+  streamableSessions: Map<string, StreamableSession>;
+  getOrCreateStreamableSession: (
+    sessionId: string | undefined
+  ) => Promise<{ sessionId: string; session: StreamableSession; created: boolean }>;
+  sseSessions: Map<string, SseSession>;
 }
 
 function setCors(res: ServerResponse): void {
@@ -185,7 +234,6 @@ async function handleHttpRequest(
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
-  // CORS preflight
   if (req.method === "OPTIONS") {
     setCors(res);
     res.writeHead(204);
@@ -193,11 +241,17 @@ async function handleHttpRequest(
     return;
   }
 
-  // Health check (no auth)
   if (url.pathname === "/health" && req.method === "GET") {
     setCors(res);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", version: "1.0.0" }));
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        version: "1.0.0",
+        streamableSessions: ctx.streamableSessions.size,
+        sseSessions: ctx.sseSessions.size,
+      })
+    );
     return;
   }
 
@@ -205,7 +259,34 @@ async function handleHttpRequest(
   if (url.pathname === ctx.endpoint) {
     if (!checkAuth(req, res, options.authToken)) return;
     setCors(res);
-    await ctx.streamableTransport.handleRequest(req, res);
+
+    const headerSid = (req.headers["mcp-session-id"] as string | undefined)?.trim();
+
+    let session: StreamableSession;
+    if (headerSid) {
+      const existing = ctx.streamableSessions.get(headerSid);
+      if (!existing) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32001, message: "Unknown or expired sessionId" },
+            id: null,
+          })
+        );
+        return;
+      }
+      existing.lastUsed = Date.now();
+      session = existing;
+    } else {
+      // No session id → assume initialize. The transport will accept it
+      // and assign a new session id. Any non-initialize request without a
+      // session id is rejected by the SDK with 400.
+      const created = await ctx.getOrCreateStreamableSession(undefined);
+      session = created.session;
+    }
+
+    await session.transport.handleRequest(req, res);
     return;
   }
 
@@ -220,10 +301,10 @@ async function handleHttpRequest(
     ctx.sseSessions.set(transport.sessionId, { server, transport });
 
     transport.onclose = () => {
-      const session = ctx.sseSessions.get(transport.sessionId);
-      if (session) {
+      const s = ctx.sseSessions.get(transport.sessionId);
+      if (s) {
         ctx.sseSessions.delete(transport.sessionId);
-        void session.server.close();
+        void s.server.close();
       }
     };
 
