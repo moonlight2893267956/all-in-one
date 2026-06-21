@@ -3,11 +3,11 @@ import { Buffer } from "node:buffer";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const SILICONFLOW_MODELS = [
-  "Kwai-Kolors/Kolors",
-  "black-forest-labs/FLUX.1-schnell",
-  "black-forest-labs/FLUX.1-dev",
-  "stabilityai/stable-diffusion-3-5-large",
+const NEWAPI_MODELS = [
+  "gpt-image-2",
+  "gpt-image-1",
+  "dall-e-3",
+  "dall-e-2",
 ] as const;
 
 const DASHSCOPE_IMAGE_MODELS = [
@@ -15,7 +15,7 @@ const DASHSCOPE_IMAGE_MODELS = [
   "wan2.7-image-pro",
 ] as const;
 
-const SILICONFLOW_URL = "https://api.siliconflow.cn/v1/images/generations";
+const NEWAPI_URL = "https://doc.newapi.pro/v1/images/generations";
 const DASHSCOPE_URL =
   "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
 
@@ -28,9 +28,10 @@ interface DashScopeResponse {
   error?: { code?: string; message?: string };
 }
 
-interface SiliconFlowResponse {
-  images?: Array<{ url?: string }>;
-  error?: { message?: string };
+interface NewApiImageResponse {
+  created?: number;
+  data?: Array<{ url?: string; b64_json?: string; revised_prompt?: string }>;
+  error?: { message?: string; code?: string };
 }
 
 const DEFAULT_OUTPUT_DIR = "/tmp/mcp-images";
@@ -38,31 +39,31 @@ const DEFAULT_OUTPUT_DIR = "/tmp/mcp-images";
 const InputSchema = z.object({
   prompt: z.string().min(1).describe("Text description of the image to generate"),
   provider: z
-    .enum(["siliconflow", "dashscope"])
+    .enum(["newapi", "dashscope"])
     .optional()
     .describe(
-      "Image provider. If omitted, picks whichever API key is configured (siliconflow first)."
+      "Image provider. If omitted, uses newapi (gpt-image-2) when NEWAPI_API_KEY is set, " +
+        "otherwise falls back to dashscope. Set explicitly to force a provider."
     ),
   model: z
     .string()
     .optional()
     .describe(
-      "Model name. Defaults to Kwai-Kolors/Kolors (siliconflow) or qwen-image-2.0-pro (dashscope). " +
-        "Provider-specific valid models: siliconflow: Kwai-Kolors/Kolors, black-forest-labs/FLUX.1-schnell, " +
-        "black-forest-labs/FLUX.1-dev, stabilityai/stable-diffusion-3-5-large; " +
-        "dashscope: qwen-image-2.0-pro, wan2.7-image-pro."
+      "Model name. Defaults to gpt-image-2 (newapi) or qwen-image-2.0-pro (dashscope). " +
+        "Provider-specific valid models: newapi (OpenAI-compatible): gpt-image-2, gpt-image-1, " +
+        "dall-e-3, dall-e-2; dashscope: qwen-image-2.0-pro, wan2.7-image-pro."
     ),
   size: z
     .string()
     .default("1024x1024")
     .describe(
-      "Image size. Format depends on provider: siliconflow uses 'WxH' (e.g. 1024x1024, 1280x720); " +
-        "dashscope uses 'W*H' (e.g. 1024*1024, 2048*2048). The script will translate if needed."
+      "Image size. Format depends on provider: newapi uses 'WxH' (e.g. 1024x1024, 1536x1024, " +
+        "1024x1536); dashscope uses 'W*H' (e.g. 1024*1024, 2048*2048). The script translates if needed."
     ),
   negative_prompt: z
     .string()
     .optional()
-    .describe("Negative prompt describing what to avoid"),
+    .describe("Negative prompt describing what to avoid (dashscope only; ignored by newapi)"),
   save_to: z
     .string()
     .optional()
@@ -88,34 +89,34 @@ const InputSchema = z.object({
     .describe("ACL applied to the uploaded COS object. public-read lets the URL work directly."),
 });
 
-function pickProvider(explicit?: "siliconflow" | "dashscope"): "siliconflow" | "dashscope" {
+type Provider = "newapi" | "dashscope";
+
+function pickProvider(explicit?: Provider): Provider {
   if (explicit) return explicit;
-  if (process.env.SILICONFLOW_API_KEY) return "siliconflow";
+  if (process.env.NEWAPI_API_KEY) return "newapi";
   if (process.env.DASHSCOPE_API_KEY) return "dashscope";
   throw new Error(
-    "No image provider API key found. Set SILICONFLOW_API_KEY or DASHSCOPE_API_KEY."
+    "No image provider API key found. Set NEWAPI_API_KEY or DASHSCOPE_API_KEY."
   );
 }
 
-async function generateSiliconFlow(
+async function generateNewApi(
   prompt: string,
   model: string,
-  size: string,
-  negativePrompt: string | undefined
-): Promise<string> {
-  const apiKey = process.env.SILICONFLOW_API_KEY;
-  if (!apiKey) throw new Error("SILICONFLOW_API_KEY is not set");
+  size: string
+): Promise<{ url: string; revisedPrompt?: string }> {
+  const apiKey = process.env.NEWAPI_API_KEY;
+  if (!apiKey) throw new Error("NEWAPI_API_KEY is not set");
 
   const params: Record<string, unknown> = {
     model,
     prompt,
-    image_size: size.replace("*", "x"),
-    num_inference_steps: 20,
-    batch_size: 1,
+    n: 1,
+    size: size.replace("*", "x"),
+    response_format: "url",
   };
-  if (negativePrompt) params.negative_prompt = negativePrompt;
 
-  const resp = await fetch(SILICONFLOW_URL, {
+  const resp = await fetch(NEWAPI_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -123,19 +124,30 @@ async function generateSiliconFlow(
     },
     body: JSON.stringify(params),
   });
-  const result = (await resp.json()) as SiliconFlowResponse;
-  if (!resp.ok) {
+  const result = (await resp.json()) as NewApiImageResponse;
+  if (!resp.ok || result.error) {
     throw new Error(
-      `SiliconFlow error (${resp.status}): ${result.error?.message ?? "unknown"}`
+      `NewAPI error (${resp.status}): ${result.error?.message ?? "unknown"}`
     );
   }
-  const url = result.images?.[0]?.url;
-  if (!url) {
+  const item = result.data?.[0];
+  if (!item) {
     throw new Error(
-      `No image URL in SiliconFlow response: ${JSON.stringify(result).slice(0, 500)}`
+      `No image in NewAPI response: ${JSON.stringify(result).slice(0, 500)}`
     );
   }
-  return url;
+  if (item.b64_json && !item.url) {
+    throw new Error(
+      "NewAPI returned b64_json but this tool expects response_format=url. " +
+        "The provider may not support url format for this model."
+    );
+  }
+  if (!item.url) {
+    throw new Error(
+      `No image URL in NewAPI response: ${JSON.stringify(result).slice(0, 500)}`
+    );
+  }
+  return { url: item.url, revisedPrompt: item.revised_prompt };
 }
 
 async function generateDashScope(
@@ -189,32 +201,37 @@ async function generateDashScope(
 export const imageGenerateTool = {
   name: "image_generate",
   description:
-    "Generate an image from a text prompt using SiliconFlow (Kwai-Kolors, FLUX, SD3.5) or " +
-    "DashScope (qwen-image, wan2.7). The image is downloaded to the server filesystem at " +
-    "save_to (default /tmp/mcp-images/) and its path is returned. Optionally also uploads to COS " +
-    "(upload_to_cos=true) and returns the public/presigned URL.",
+    "Generate an image from a text prompt. Default provider is newapi (gpt-image-2, " +
+    "OpenAI-compatible at https://doc.newapi.pro/v1/images/generations); falls back to " +
+    "DashScope (qwen-image, wan2.7) when NEWAPI_API_KEY is unset. The image is downloaded " +
+    "to the server filesystem at save_to (default /tmp/mcp-images/) and its path is returned. " +
+    "Optionally also uploads to COS (upload_to_cos=true) and returns the public/presigned URL.",
   inputSchema: {
     type: "object" as const,
     properties: {
       prompt: { type: "string", description: "Text description of the image to generate" },
       provider: {
         type: "string",
-        enum: ["siliconflow", "dashscope"],
+        enum: ["newapi", "dashscope"],
         description:
-          "Image provider. If omitted, picks whichever API key is configured (siliconflow first).",
+          "Image provider. If omitted, uses newapi (gpt-image-2) when NEWAPI_API_KEY is set, " +
+          "otherwise falls back to dashscope.",
       },
       model: {
         type: "string",
         description:
-          "Model name. Defaults to Kwai-Kolors/Kolors (siliconflow) or qwen-image-2.0-pro (dashscope).",
+          "Model name. Defaults to gpt-image-2 (newapi) or qwen-image-2.0-pro (dashscope).",
       },
       size: {
         type: "string",
         default: "1024x1024",
         description:
-          "Image size. Format depends on provider: siliconflow 'WxH', dashscope 'W*H'.",
+          "Image size. Format depends on provider: newapi 'WxH' (e.g. 1024x1024, 1536x1024, 1024x1536); dashscope 'W*H'.",
       },
-      negative_prompt: { type: "string", description: "Negative prompt" },
+      negative_prompt: {
+        type: "string",
+        description: "Negative prompt (dashscope only; ignored by newapi).",
+      },
       save_to: {
         type: "string",
         description:
@@ -246,25 +263,25 @@ export const imageGenerateTool = {
     let model = parsed.model;
     if (!model) {
       model =
-        provider === "siliconflow"
-          ? process.env.SILICONFLOW_IMAGE_MODEL ?? "Kwai-Kolors/Kolors"
+        provider === "newapi"
+          ? process.env.NEWAPI_IMAGE_MODEL ?? "gpt-image-2"
           : process.env.DASHSCOPE_IMAGE_MODEL ?? "qwen-image-2.0-pro";
     }
 
-    const url =
-      provider === "siliconflow"
-        ? await generateSiliconFlow(
-            parsed.prompt,
-            model,
-            parsed.size,
-            parsed.negative_prompt
-          )
-        : await generateDashScope(
-            parsed.prompt,
-            model,
-            parsed.size,
-            parsed.negative_prompt
-          );
+    let url: string;
+    let revisedPrompt: string | undefined;
+    if (provider === "newapi") {
+      const r = await generateNewApi(parsed.prompt, model, parsed.size);
+      url = r.url;
+      revisedPrompt = r.revisedPrompt;
+    } else {
+      url = await generateDashScope(
+        parsed.prompt,
+        model,
+        parsed.size,
+        parsed.negative_prompt
+      );
+    }
 
     // Download to local filesystem
     const resp = await fetch(url);
@@ -286,6 +303,9 @@ export const imageGenerateTool = {
       `Size: ${(buf.length / 1024).toFixed(1)} KB`,
       `Saved to: ${saveTo}`,
     ];
+    if (revisedPrompt) {
+      lines.push(`Revised prompt: ${revisedPrompt}`);
+    }
 
     if (parsed.upload_to_cos) {
       const { cosKey, publicUrl, acl } = await uploadToCos(

@@ -139,10 +139,10 @@ deploy/
 | `MCP_ENDPOINT` | `/mcp` | HTTP transport |
 | `AUTH_TOKEN` | _(unset)_ | HTTP transport — required in production |
 | `TAVILY_API_KEY` | _(unset)_ | `tavily_search` tool |
-| `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | _(unset)_ | `image_understand`, `image_generate` |
+| `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | _(unset)_ | `image_understand`, `image_generate` (fallback) |
 | `DASHSCOPE_IMAGE_MODEL` | `qwen-image-2.0-pro` | `image_generate` (provider=dashscope) |
-| `SILICONFLOW_API_KEY` | _(unset)_ | `image_generate` (provider=siliconflow) |
-| `SILICONFLOW_IMAGE_MODEL` | `Kwai-Kolors/Kolors` | `image_generate` (provider=siliconflow) |
+| `NEWAPI_API_KEY` | _(unset)_ | `image_generate` (provider=newapi, default) |
+| `NEWAPI_IMAGE_MODEL` | `gpt-image-2` | `image_generate` (provider=newapi) |
 | `COS_SECRET_ID` / `COS_SECRET_KEY` | _(unset)_ | all 4 `cos_*` tools |
 | `COS_BUCKET` | _(unset)_ | all 4 `cos_*` tools |
 | `COS_REGION` | _(unset)_ | all 4 `cos_*` tools |
