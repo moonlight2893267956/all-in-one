@@ -142,6 +142,7 @@ deploy/
 | `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | _(unset)_ | `image_understand`, `image_generate` (fallback) |
 | `DASHSCOPE_IMAGE_MODEL` | `qwen-image-2.0-pro` | `image_generate` (provider=dashscope) |
 | `NEWAPI_API_KEY` | _(unset)_ | `image_generate` (provider=newapi, default) |
+| `NEWAPI_BASE_URL` | `https://ai.centos.hk/v1` | `image_generate` (provider=newapi) |
 | `NEWAPI_IMAGE_MODEL` | `gpt-image-2` | `image_generate` (provider=newapi) |
 | `COS_SECRET_ID` / `COS_SECRET_KEY` | _(unset)_ | all 4 `cos_*` tools |
 | `COS_BUCKET` | _(unset)_ | all 4 `cos_*` tools |
