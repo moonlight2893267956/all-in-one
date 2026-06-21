@@ -15,7 +15,7 @@ const DASHSCOPE_IMAGE_MODELS = [
   "wan2.7-image-pro",
 ] as const;
 
-const NEWAPI_URL = "https://doc.newapi.pro/v1/images/generations";
+const NEWAPI_URL = "https://ai.centos.hk/v1/images/generations";
 const DASHSCOPE_URL =
   "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
 
@@ -202,7 +202,7 @@ export const imageGenerateTool = {
   name: "image_generate",
   description:
     "Generate an image from a text prompt. Default provider is newapi (gpt-image-2, " +
-    "OpenAI-compatible at https://doc.newapi.pro/v1/images/generations); falls back to " +
+    "OpenAI-compatible at https://ai.centos.hk/v1/images/generations); falls back to " +
     "DashScope (qwen-image, wan2.7) when NEWAPI_API_KEY is unset. The image is downloaded " +
     "to the server filesystem at save_to (default /tmp/mcp-images/) and its path is returned. " +
     "Optionally also uploads to COS (upload_to_cos=true) and returns the public/presigned URL.",
