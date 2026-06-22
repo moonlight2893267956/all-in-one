@@ -81,11 +81,11 @@ sudo chmod 600 /etc/mcp-all-in-one/mcp-all-in-one.env
 #      bash -c 'set -a; source /etc/mcp-all-in-one/mcp-all-in-one.env; set +a; \
 #               exec node build/index.js http'
 
-# 4. 宝塔 -> 网站 -> npm.yunmiao.site -> 配置文件
+# 4. 宝塔 -> 网站 -> nps.yunmiao.site -> 配置文件
 #    把 deploy/baota/mcp-all-in-one.nginx.conf 里的 location /mcp 和 /health 追加进去
 
 # 5. 验证
-curl https://npm.yunmiao.site/health
+curl https://nps.yunmiao.site/health
 ```
 
 ### 非宝塔 / 裸机部署
@@ -100,7 +100,7 @@ Replace `stdio` config with HTTP:
 {
   "mcpServers": {
     "mcp-all-in-one": {
-      "url": "https://npm.yunmiao.site/mcp",
+      "url": "https://nps.yunmiao.site/mcp",
       "headers": {
         "Authorization": "Bearer <AUTH_TOKEN>"
       }
