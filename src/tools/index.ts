@@ -6,7 +6,6 @@ import { cosUploadTool } from "./cos-upload.js";
 import { cosDownloadTool } from "./cos-download.js";
 import { cosListTool } from "./cos-list.js";
 import { cosDeleteTool } from "./cos-delete.js";
-import { shellExecTool } from "./shell-exec.js";
 
 export interface ToolDefinition {
   name: string;
@@ -24,5 +23,4 @@ export const tools: ToolDefinition[] = [
   cosDownloadTool,
   cosListTool,
   cosDeleteTool,
-  shellExecTool,
 ];
