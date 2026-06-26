@@ -23,7 +23,6 @@ Supports two transports:
 | `cos_delete` | Delete one or more COS objects |
 | `hexo_list` | List recent Hexo blog posts (newest first, with parsed date + slug) |
 | `hexo_publish` | Publish or update a Hexo post; auto-builds front matter and runs `hexo generate` |
-| `hexo_new` | Create a blank Hexo post from the scaffold (`hexo new <title>`) |
 | `hexo_delete` | Delete a Hexo post by filename (requires `confirm: true`) and regenerate |
 | `hexo_rebuild` | Full clean + regenerate the entire blog (use after theme/config edits) |
 

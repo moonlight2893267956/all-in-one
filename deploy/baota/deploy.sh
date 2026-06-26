@@ -13,6 +13,17 @@ PORT="${PORT:-3000}"
 
 cd "$APP_DIR"
 
+echo "==> Ensuring npm cache is writable"
+# 宝塔默认把 /www/server/nodejs/cache owner 设为 1004:1005，
+# 普通 yunmiao 用户写不进去，会导致 npm ci / npm run build 失败。
+# 有 sudo 就修一下；没有就跳过（不影响 git pull，只会让 npm 步骤报错）。
+if sudo -n true 2>/dev/null; then
+  sudo chown -R 1004:1005 /www/server/nodejs/cache || \
+    echo "    (chown failed, continuing — npm 步骤可能会报错)"
+else
+  echo "    (no passwordless sudo, skipping chown)"
+fi
+
 echo "==> Pulling latest code"
 git pull --rebase --autostash
 

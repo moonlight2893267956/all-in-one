@@ -8,7 +8,6 @@ import { cosListTool } from "./cos-list.js";
 import { cosDeleteTool } from "./cos-delete.js";
 import { hexoListTool } from "./hexo-list.js";
 import { hexoPublishTool } from "./hexo-publish.js";
-import { hexoNewTool } from "./hexo-new.js";
 import { hexoDeleteTool } from "./hexo-delete.js";
 import { hexoRebuildTool } from "./hexo-rebuild.js";
 
@@ -30,7 +29,6 @@ export const tools: ToolDefinition[] = [
   cosDeleteTool,
   hexoListTool,
   hexoPublishTool,
-  hexoNewTool,
   hexoDeleteTool,
   hexoRebuildTool,
 ];
