@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { runHexo, getServerDate, getTodayPrefix, parseFilename } from "./hexo.js";
+import { runHexo, getServerDate } from "./hexo.js";
 
 const InputSchema = z.object({
   limit: z
@@ -14,9 +14,8 @@ const InputSchema = z.object({
 export const hexoListTool = {
   name: "hexo_list",
   description:
-    "List recent Hexo blog posts on the server. Reads " +
-    "<HEXO_SOURCE_DIR>/source/_posts/ sorted by modification time (newest first) " +
-    "and shows filename, size, mtime, and parsed date+slug for each.",
+    "List Hexo blog posts via `hexo list post` (newest first). " +
+    "Returns Date | Title | Path | Category | Tags for each post.",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -26,30 +25,25 @@ export const hexoListTool = {
   },
   handler: async (args: Record<string, unknown>): Promise<string> => {
     const parsed = InputSchema.parse(args);
-    const result = await runHexo(
-      `list source/_posts --format "%p|%s|%TY-%Tm-%Td %TH:%TM" 2>/dev/null | head -n ${parsed.limit + 1}`,
-      15_000
-    );
+    const result = await runHexo(`list post`, 30_000);
     if (result.exitCode !== 0) {
       throw new Error(
         `hexo_list failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`
       );
     }
-    const lines = result.stdout.split("\n").filter(Boolean);
-    const rows: string[] = [];
-    for (const line of lines) {
-      const [path, size, mtime] = line.split("|");
-      if (!path) continue;
-      const filename = path.split("/").pop() ?? path;
-      const parsed2 = parseFilename(filename);
-      rows.push(
-        `  ${filename.padEnd(56)} ${size.padStart(7)}  ${mtime}` +
-          (parsed2 ? `  [date=${parsed2.date}, slug=${parsed2.slug}]` : "  [unrecognized]")
-      );
+    const lines = result.stdout.split("\n").filter((l) => l && !l.startsWith("INFO"));
+    const headerIdx = lines.findIndex((l) => l.startsWith("Date"));
+    if (headerIdx === -1) {
+      return "No posts found.";
+    }
+    const dataLines = lines.slice(headerIdx + 1).slice(0, parsed.limit);
+    if (dataLines.length === 0) {
+      return "No posts found.";
     }
     return [
-      `Recent ${rows.length} posts (from ${getServerDate()}):`,
-      ...rows,
+      `Recent ${dataLines.length} posts (snapshot at ${getServerDate()}):`,
+      lines[headerIdx],
+      ...dataLines,
     ].join("\n");
   },
 };
