@@ -154,33 +154,6 @@ export function buildFrontMatter(fm: FrontMatterFields): string {
   return lines.join("\n");
 }
 
-export function buildFrontMatterWithSlug(args: {
-  title: string;
-  date: string;
-  tags: string[];
-  categories: string[];
-  slug: string;
-}): string {
-  const lines: string[] = ["---"];
-  lines.push(`title: ${args.title}`);
-  lines.push(`date: ${args.date}`);
-  if (args.tags.length > 0) {
-    lines.push("tags:");
-    for (const t of args.tags) lines.push(`  - ${t}`);
-  }
-  if (args.categories.length > 0) {
-    lines.push("categories:");
-    for (const c of args.categories) lines.push(`  - ${c}`);
-  }
-  // The `slug` field is consumed by hexo when the permalink template uses
-  // `:slug`. Without it, hexo falls back to slugifying the title (which
-  // breaks for Chinese / special-character titles and produces URLs that
-  // don't match the file slug).
-  lines.push(`slug: ${args.slug}`);
-  lines.push("---");
-  return lines.join("\n");
-}
-
 export function ensureFilename(datePrefix: string, slug: string): string {
   if (!FILENAME_RE.test(`${datePrefix}-${slug}.md`)) {
     throw new Error(
