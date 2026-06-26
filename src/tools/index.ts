@@ -6,6 +6,11 @@ import { cosUploadTool } from "./cos-upload.js";
 import { cosDownloadTool } from "./cos-download.js";
 import { cosListTool } from "./cos-list.js";
 import { cosDeleteTool } from "./cos-delete.js";
+import { hexoListTool } from "./hexo-list.js";
+import { hexoPublishTool } from "./hexo-publish.js";
+import { hexoNewTool } from "./hexo-new.js";
+import { hexoDeleteTool } from "./hexo-delete.js";
+import { hexoRebuildTool } from "./hexo-rebuild.js";
 
 export interface ToolDefinition {
   name: string;
@@ -23,4 +28,9 @@ export const tools: ToolDefinition[] = [
   cosDownloadTool,
   cosListTool,
   cosDeleteTool,
+  hexoListTool,
+  hexoPublishTool,
+  hexoNewTool,
+  hexoDeleteTool,
+  hexoRebuildTool,
 ];

@@ -21,6 +21,11 @@ Supports two transports:
 | `cos_download` | Download a COS object to the server filesystem |
 | `cos_list` | List objects in a COS bucket (with prefix filter) |
 | `cos_delete` | Delete one or more COS objects |
+| `hexo_list` | List recent Hexo blog posts (newest first, with parsed date + slug) |
+| `hexo_publish` | Publish or update a Hexo post; auto-builds front matter and runs `hexo generate` |
+| `hexo_new` | Create a blank Hexo post from the scaffold (`hexo new <title>`) |
+| `hexo_delete` | Delete a Hexo post by filename (requires `confirm: true`) and regenerate |
+| `hexo_rebuild` | Full clean + regenerate the entire blog (use after theme/config edits) |
 
 ## Quick start (local, stdio)
 
@@ -148,6 +153,8 @@ deploy/
 | `COS_BUCKET` | _(unset)_ | all 4 `cos_*` tools |
 | `COS_REGION` | _(unset)_ | all 4 `cos_*` tools |
 | `COS_PUBLIC_HOST` | _(unset)_ | public URL returned by `cos_upload` / `image_generate` |
+| `HEXO_SOURCE_DIR` | `/home/yunmiao/apps/hexo-source` | `hexo_*` tools — Hexo source root |
+| `HEXO_NVM_PATH` | `/home/yunmiao/.nvm/nvm.sh` | `hexo_*` tools — nvm.sh path to load before `npx hexo` |
 
 ## License
 
