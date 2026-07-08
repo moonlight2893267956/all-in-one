@@ -1,9 +1,9 @@
 name: CD
 
-# 仅 push 到 main 时部署（PR 不触发）
+# 手动触发：在 Actions 页面点 "Run workflow" 才部署（需有仓库写权限）。
+# 相当于人工审批闸；CI 仍由 push/PR 自动跑（见 ci.yml）。
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: cd-main
@@ -15,7 +15,8 @@ jobs:
     # 引用 prod 环境：
     #   - SSH_KEY 放 Environment secrets（敏感，日志打码）
     #   - 其余（SSH_HOST/USER/PORT/DEPLOY_PATH）放 Environment variables，用 vars. 读取
-    # 可在环境里开启保护规则（如部署前需审批、仅 main 可部署）。
+    # 部署审批闸由 workflow_dispatch（手动 Run workflow）提供；
+    # 升级到 Team/Enterprise 后可在此环境加 Required reviewers 做指定人审批。
     environment: prod
     steps:
       - name: SSH 登录并部署
