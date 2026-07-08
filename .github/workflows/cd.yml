@@ -60,5 +60,11 @@ jobs:
               pm2 save
             fi
 
-            echo ">>> health"
-            curl -fsS "http://127.0.0.1:${PORT:-3030}/health" && echo
+            echo ">>> health (等待进程监听，最多 20s)"
+            for i in $(seq 1 20); do
+              if curl -fsS "http://127.0.0.1:${PORT:-3030}/health"; then
+                echo " <- health OK"
+                break
+              fi
+              sleep 1
+            done
