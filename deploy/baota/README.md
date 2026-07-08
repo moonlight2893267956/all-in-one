@@ -66,8 +66,22 @@
 #     -H "Accept: application/json, text/event-stream" \
 #     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}'
 #
-# ===== 6. 后续更新 =====
+# ===== 6. 后续更新（一键部署）=====
 #
+# 已接入 GitHub Actions（参照 miao-infra 的方式）：push 到 main 即自动部署。
+# 只需在仓库 Settings → Environments → prod 配置：
+#   - Secret:  SSH_KEY            （CI 登录本服务器的私钥）
+#   - Variable: SSH_HOST / SSH_USER / SSH_PORT(可选) / SSH_DEPLOY_PATH(可选, 默认 /opt/mcp-all-in-one)
+# 服务器本身需能 git pull（配只读 deploy key，见 deploy/bootstrap.sh 第 0 步）。
+#
+# 之后每次：
+#   git push origin main
+#   → GitHub Actions 自动执行：git pull → npm ci → build → pm2 restart
+#   → 在 Actions 页面看 CD 任务是否跑绿，再 curl https://<域名>/health 验证
+#
+# 首次在新服务器 / 重装宝塔时，跑一遍 deploy/bootstrap.sh 完成初始化即可。
+#
+# （如需手动更新，仍可）：
 #   ssh yunmiao@81.70.216.46
 #   cd /opt/mcp-all-in-one
 #   export PATH=$PATH:/www/server/nodejs/v20.11.1/bin

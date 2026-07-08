@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 防止并发 CI 抢占同一 runner 资源
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: 安装依赖
+        run: npm ci
+      - name: 类型检查 + 构建 (tsc)
+        # tsc 即类型检查；产出 build/。无需任何真实密钥（纯编译）。
+        run: npm run build

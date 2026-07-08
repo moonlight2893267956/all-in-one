@@ -1,0 +1,62 @@
+name: CD
+
+# 仅 push 到 main 时部署（PR 不触发）
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # 引用 prod 环境：
+    #   - SSH_KEY 放 Environment secrets（敏感，日志打码）
+    #   - 其余（SSH_HOST/USER/PORT/DEPLOY_PATH）放 Environment variables，用 vars. 读取
+    # 可在环境里开启保护规则（如部署前需审批、仅 main 可部署）。
+    environment: prod
+    steps:
+      - name: SSH 登录并部署
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ vars.SSH_HOST }}
+          username: ${{ vars.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            cd "${{ vars.SSH_DEPLOY_PATH || '/opt/mcp-all-in-one' }}"
+
+            # node / npm PATH：兼容 nvm 与宝塔（宝塔 Node 路径非标准）
+            if [ -s "$HOME/.nvm/nvm.sh" ]; then
+              source "$HOME/.nvm/nvm.sh"
+            elif [ -d /www/server/nodejs ]; then
+              export PATH="$(ls -d /www/server/nodejs/*/bin | head -1):$PATH"
+            fi
+            node -v; npm -v
+
+            # 宝塔 npm cache 权限（有密码 sudo 才执行，失败不阻断构建）
+            if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+              sudo chown -R 1004:1005 /www/server/nodejs/cache 2>/dev/null || true
+            fi
+
+            echo ">>> git pull"
+            git pull --ff-only
+
+            echo ">>> install + build"
+            npm ci --omit=dev
+            npm run build
+
+            echo ">>> restart (pm2)"
+            if pm2 describe mcp-all-in-one >/dev/null 2>&1; then
+              pm2 restart mcp-all-in-one
+            else
+              pm2 start ecosystem.config.cjs
+              pm2 save
+            fi
+
+            echo ">>> health"
+            curl -fsS "http://127.0.0.1:${PORT:-3030}/health" && echo
