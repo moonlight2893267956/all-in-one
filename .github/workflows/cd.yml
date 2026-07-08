@@ -1,11 +1,12 @@
 name: CD
 
-# 手动触发：在 Actions 页面点 "Run workflow" 才部署（需仓库写权限）。
-# 这是当前 plan 下可用的人工审批闸（环境 Required reviewers 需 Team/Enterprise plan）。
-# CI 仍由 push/PR 自动跑（见 ci.yml）。要升级到 miao-infra 的 push+指定人审批，
-# 需把账户升级到 Team/Enterprise，再在 prod 环境开启 Required reviewers。
+# 仅 push 到 main 时部署（PR 不触发），与 miao-infra 一致。
+# 部署审批由 prod 环境的 Required reviewers 保护规则提供（仓库需为 public 或 Team/Enterprise plan）：
+# push 后 CD 作业进入等待，指定审批人（moonlight2893267956）在
+# Actions run 页面点 Review deployments -> Approve 后才真正执行。
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 concurrency:
   group: cd-main
@@ -17,7 +18,8 @@ jobs:
     # 引用 prod 环境（读取 SSH_KEY secret 与各 vars.，提供部署变量隔离）：
     #   - SSH_KEY 放 Environment secrets（敏感，日志打码）
     #   - 其余（SSH_HOST/USER/PORT/DEPLOY_PATH）放 Environment variables，用 vars. 读取
-    # 注：本 plan 不支持环境的 Required reviewers；审批闸由 workflow_dispatch 手动触发提供。
+    # 该环境已配置 Required reviewers（moonlight2893267956），
+    # push 后需其审批通过才会真正执行部署（与 miao-infra 一致）。
     environment: prod
     steps:
       - name: SSH 登录并部署
