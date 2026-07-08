@@ -47,8 +47,10 @@ jobs:
             git pull --ff-only
 
             echo ">>> install + build"
-            npm ci --omit=dev
+            # 注意：build 用的是 tsc（devDependency），必须完整安装，不能 --omit=dev
+            npm ci
             npm run build
+            npm prune --omit=dev   # 构建完后剔除 dev 依赖，保持运行时精简
 
             echo ">>> restart (pm2)"
             if pm2 describe mcp-all-in-one >/dev/null 2>&1; then
