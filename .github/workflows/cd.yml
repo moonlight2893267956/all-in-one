@@ -1,7 +1,9 @@
 name: CD
 
-# 手动触发：在 Actions 页面点 "Run workflow" 才部署（需有仓库写权限）。
-# 相当于人工审批闸；CI 仍由 push/PR 自动跑（见 ci.yml）。
+# 手动触发：在 Actions 页面点 "Run workflow" 才部署（需仓库写权限）。
+# 这是当前 plan 下可用的人工审批闸（环境 Required reviewers 需 Team/Enterprise plan）。
+# CI 仍由 push/PR 自动跑（见 ci.yml）。要升级到 miao-infra 的 push+指定人审批，
+# 需把账户升级到 Team/Enterprise，再在 prod 环境开启 Required reviewers。
 on:
   workflow_dispatch:
 
@@ -12,11 +14,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # 引用 prod 环境：
+    # 引用 prod 环境（读取 SSH_KEY secret 与各 vars.，提供部署变量隔离）：
     #   - SSH_KEY 放 Environment secrets（敏感，日志打码）
     #   - 其余（SSH_HOST/USER/PORT/DEPLOY_PATH）放 Environment variables，用 vars. 读取
-    # 部署审批闸由 workflow_dispatch（手动 Run workflow）提供；
-    # 升级到 Team/Enterprise 后可在此环境加 Required reviewers 做指定人审批。
+    # 注：本 plan 不支持环境的 Required reviewers；审批闸由 workflow_dispatch 手动触发提供。
     environment: prod
     steps:
       - name: SSH 登录并部署
