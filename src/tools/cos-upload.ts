@@ -50,8 +50,9 @@ const UploadInput = z.object({
     .string()
     .optional()
     .describe(
-      "Base64-encoded file bytes. Use for SMALL files only (base64 < ~30KB, to avoid context " +
-      "truncation); larger files should be staged via scp + local_path. Mutually exclusive with local_path."
+      "Base64-encoded file bytes. To avoid the caller's Read-tool PER-LINE truncation (~5KB/line), " +
+      "WRAP the base64 with newlines (76 chars/line) — the decoder ignores whitespace, so any size " +
+      "that fits the caller's context works. Mutually exclusive with local_path."
     ),
   content_text: z
     .string()
@@ -87,7 +88,9 @@ export const cosUploadTool = {
     "  (A) Stage it on the server first via scp, then use local_path (works for ANY size):\n" +
     "        scp /local/path/to/file.png yunmiao@ts.yunmiao.site:/home/yunmiao/apps/all-in-one/uploads/\n" +
     "      then call with local_path='file.png' (relative names resolve inside the server upload dir).\n" +
-    "  (B) For SMALL files only (base64 string < ~30KB, to avoid context/window truncation), pass content_base64.\n" +
+    "  (B) Pass content_base64. Truncation is PER-LINE (~5KB/line) in the caller's Read tool, not per total " +
+    "size — so WRAP the base64 at 76 chars/line (the server ignores whitespace) and any context-fitting " +
+    "size works; for very large files prefer cos_upload_chunked.\n" +
     "Use content_text for plain-text blobs. Exactly one of local_path / content_base64 / content_text is required.",
   inputSchema: {
     type: "object" as const,
@@ -100,7 +103,7 @@ export const cosUploadTool = {
       content_base64: {
         type: "string",
         description:
-          "Base64-encoded file bytes. Use for SMALL files only (base64 < ~30KB to avoid context truncation); larger files should be staged via scp + local_path.",
+          "Base64-encoded file bytes. WRAP at 76 chars/line to avoid the caller's Read-tool per-line truncation (~5KB/line); the server ignores whitespace, so any context-fitting size works.",
       },
       content_text: {
         type: "string",
@@ -292,9 +295,10 @@ export const cosUploadChunkedTool = {
   name: "cos_upload_chunked",
   description:
     "Upload a (possibly large) file to Tencent Cloud COS via chunked base64 — NO scp/SSH required. " +
-    "The MCP server is remote, so a local-machine path cannot be used, and a single huge base64 string " +
-    "gets truncated in the caller's context. Instead, read the local file in chunks, base64-encode each " +
-    "chunk (keep <= ~20KB base64), and call this tool ONCE PER CHUNK:\n" +
+    "The MCP server is remote, so a local-machine path cannot be used. Truncation here is PER-LINE " +
+    "(the caller's Read tool caps a single line at ~5KB), NOT per total size. So: read the local file in " +
+    "chunks, base64-encode each chunk, WRAP each chunk's base64 at 76 chars/line, and call this tool " +
+    "ONCE PER CHUNK (a single long line inside a chunk would still be truncated):\n" +
     "  1) First chunk: omit upload_id. The server returns an upload_id.\n" +
     "  2) Subsequent chunks: pass the same upload_id and increasing sequence (0,1,2,...).\n" +
     "  3) Last chunk: set final=true. The server concatenates all chunks in order and uploads to COS, " +
@@ -307,7 +311,7 @@ export const cosUploadChunkedTool = {
       cos_key: { type: "string", description: "Final COS object key, e.g. 'shots/2025/foo.png'." },
       content_base64: {
         type: "string",
-        description: "Base64 of THIS chunk (keep <= ~20KB to avoid context truncation).",
+        description: "Base64 of THIS chunk. WRAP at 76 chars/line so no single line exceeds the caller's Read line limit (~5KB); the server ignores whitespace. A single long line would be truncated even inside a chunk.",
       },
       sequence: { type: "number", description: "0-based chunk index, in order." },
       final: {
