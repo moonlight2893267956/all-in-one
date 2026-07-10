@@ -17,7 +17,8 @@ Supports two transports:
 | `current_date` | Returns the current date / time / timestamp in a configurable IANA timezone |
 | `image_understand` | Vision-language understanding of an image (DashScope qwen3-vl-flash / qwen-vl-plus / qwen-vl-max) |
 | `image_generate` | Text-to-image generation (NewAPI gpt-image-2 default; DashScope qwen-image/wan2.7 fallback) |
-| `cos_upload` | Upload a file, base64, or text blob to Tencent Cloud COS |
+| `cos_upload` | Upload a file, base64, or text blob to Tencent Cloud COS (see "Uploading local files") |
+| `cos_upload_chunked` | Upload a (large) file via chunked base64 — **no scp/SSH needed**; call once per small chunk, `final=true` on the last |
 | `cos_download` | Download a COS object to the server filesystem |
 | `cos_list` | List objects in a COS bucket (with prefix filter) |
 | `cos_delete` | Delete one or more COS objects |
