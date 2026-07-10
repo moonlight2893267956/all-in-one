@@ -1,9 +1,30 @@
+import path from "node:path";
 import { z } from "zod";
 import {
   cosUploadFile,
   cosUploadBuffer,
   loadConfig,
 } from "./cos-client.js";
+import { getUploadDir } from "../config.js";
+
+/**
+ * Resolve a caller-supplied local_path against the staging directory
+ * (MCP_UPLOAD_DIR). Relative paths land inside it; absolute paths must already
+ * be inside it. Rejects any path that escapes the directory (path traversal),
+ * so cos_upload can never read arbitrary server files.
+ */
+function resolveStagedPath(input: string, root: string): string {
+  const abs = path.isAbsolute(input)
+    ? path.resolve(input)
+    : path.resolve(root, input);
+  const rel = path.relative(root, abs);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(
+      `local_path must resolve inside MCP_UPLOAD_DIR (${root}); got: ${input}`
+    );
+  }
+  return abs;
+}
 
 const STORAGE_CLASSES = [
   "STANDARD",
@@ -17,7 +38,11 @@ const UploadInput = z.object({
   local_path: z
     .string()
     .optional()
-    .describe("Absolute path on the server. Mutually exclusive with content_base64."),
+    .describe(
+      "Path to a file INSIDE MCP_UPLOAD_DIR. Relative paths resolve under it; " +
+      "absolute paths must stay within it (path-traversal guarded). Use for files " +
+      "staged via scp. Mutually exclusive with content_base64."
+    ),
   content_base64: z
     .string()
     .optional()
@@ -55,7 +80,8 @@ export const cosUploadTool = {
     properties: {
       local_path: {
         type: "string",
-        description: "Absolute path on the server. Mutually exclusive with content_base64.",
+        description:
+          "Path to a file INSIDE MCP_UPLOAD_DIR. Relative paths resolve under it; absolute paths must stay within it (path-traversal guarded). Use for files staged via scp.",
       },
       content_base64: {
         type: "string",
@@ -100,12 +126,12 @@ export const cosUploadTool = {
     let contentType = parsed.content_type;
 
     if (parsed.local_path) {
-      const path = await import("node:path");
+      const stagedPath = resolveStagedPath(parsed.local_path, getUploadDir());
       if (!contentType) {
-        const ext = path.extname(parsed.local_path).toLowerCase();
+        const ext = path.extname(stagedPath).toLowerCase();
         contentType = guessMimeType(ext);
       }
-      const r = await cosUploadFile(parsed.local_path, parsed.cos_key, config, {
+      const r = await cosUploadFile(stagedPath, parsed.cos_key, config, {
         acl: parsed.acl,
       });
       etag = r.etag;

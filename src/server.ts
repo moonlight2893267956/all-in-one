@@ -4,11 +4,13 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { randomUUID } from "node:crypto";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { mkdirSync } from "node:fs";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { tools } from "./tools/index.js";
+import { getUploadDir } from "./config.js";
 
 const SESSION_TTL_MS = 1000 * 60 * 30; // 30 min idle
 
@@ -61,6 +63,7 @@ function createMcpServer(): Server {
 }
 
 export async function runStdioServer(): Promise<void> {
+  mkdirSync(getUploadDir(), { recursive: true });
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -88,6 +91,7 @@ interface SseSession {
 }
 
 export async function runHttpServer(options: HttpServerOptions): Promise<void> {
+  mkdirSync(getUploadDir(), { recursive: true });
   const endpoint = options.endpoint ?? "/mcp";
   const sseEndpoint = options.sseEndpoint ?? "/sse";
   const messageEndpoint = options.messageEndpoint ?? "/messages";

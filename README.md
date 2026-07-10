@@ -154,6 +154,33 @@ deploy/
 | `COS_PUBLIC_HOST` | _(unset)_ | public URL returned by `cos_upload` / `image_generate` |
 | `HEXO_SOURCE_DIR` | `/home/yunmiao/apps/hexo-source` | `hexo_*` tools — Hexo source root |
 | `HEXO_NVM_PATH` | `/home/yunmiao/.nvm/nvm.sh` | `hexo_*` tools — nvm.sh path to load before `npx hexo` |
+| `MCP_UPLOAD_DIR` | `/home/yunmiao/apps/all-in-one/uploads` | `cos_upload` — staging dir for files staged from a remote client (scp); `local_path` is constrained to it |
+
+## Uploading local files (scp convention)
+
+`cos_upload` runs on the **MCP server host**, so its `local_path` is resolved
+**server-side**. A path from your local machine (e.g. `/Users/you/shots/x.png`)
+does not exist there and fails with `ENOENT`. `content_base64` works for small
+blobs but gets truncated for large images in the client's context.
+
+**Convention:** stage the file on the server first, then reference it by a path
+inside `MCP_UPLOAD_DIR` (default `/home/yunmiao/apps/all-in-one/uploads`).
+
+```bash
+# 1) Copy the local file onto the server's staging dir
+scp /Users/you/shots/foo.png yunmiao@ts.yunmiao.site:/home/yunmiao/apps/all-in-one/uploads/
+
+# 2) Upload via MCP — relative local_path resolves inside MCP_UPLOAD_DIR
+cos_upload(local_path="foo.png", cos_key="shots/foo.png", acl="public-read")
+```
+
+- Relative `local_path` (no leading `/`) is resolved under `MCP_UPLOAD_DIR`;
+  absolute paths must already be inside it.
+- The server process creates `MCP_UPLOAD_DIR` on startup if missing.
+- This avoids base64 entirely, so large / full-page screenshots upload fine.
+- **Security:** `local_path` is path-traversal guarded and confined to
+  `MCP_UPLOAD_DIR`, so `cos_upload` can never read arbitrary server files
+  (e.g. `/etc/mcp-all-in-one/mcp-all-in-one.env` secrets).
 
 ## License
 
