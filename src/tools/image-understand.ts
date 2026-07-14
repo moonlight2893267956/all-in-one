@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getApiKey } from "../config.js";
 
 const DASHSCOPE_VL_MODELS = [
   "qwen3-vl-flash",
@@ -129,7 +130,9 @@ export const imageUnderstandTool = {
   },
   handler: async (args: Record<string, unknown>) => {
     const parsed = InputSchema.parse(args);
-    const apiKey = process.env.DASHSCOPE_API_KEY ?? process.env.QWEN_API_KEY;
+    const apiKey =
+      getApiKey("DASHSCOPE_API_KEY", { allowUnset: true }) ||
+      getApiKey("QWEN_API_KEY", { allowUnset: true });
     if (!apiKey) {
       throw new Error("DASHSCOPE_API_KEY (or QWEN_API_KEY) env var is not set");
     }

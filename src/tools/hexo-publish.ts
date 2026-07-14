@@ -76,7 +76,8 @@ export const hexoPublishTool = {
   description:
     "Publish or update a Hexo blog post. Builds the front matter from the inputs, " +
     "writes the file into <HEXO_SOURCE_DIR>/source/_posts/YYYY-MM-DD-<slug>.md, " +
-    "and runs `hexo generate --force`. " +
+    "and runs `hexo generate --force` (via _config.server.yml, so output goes to " +
+    "the site dir configured there, not the default public/). " +
     "Date defaults to the current server time; the filename date prefix always " +
     "matches the date field. Future dates are rejected. If the target file " +
     "already exists, the call fails unless overwrite=true.",

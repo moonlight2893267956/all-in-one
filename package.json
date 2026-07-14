@@ -10,7 +10,9 @@
   "scripts": {
     "build": "rm -rf build && tsc && chmod +x build/index.js",
     "start": "node build/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "scan:secrets": "bash scripts/scan-secrets.sh",
+    "setup-hooks": "git config core.hooksPath .githooks"
   },
   "keywords": [
     "mcp",

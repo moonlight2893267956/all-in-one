@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { config as loadDotenv } from "dotenv";
 import { runStdioServer, runHttpServer } from "./server.js";
+import { reportConfig, isPlaceholder } from "./config.js";
 
 const TRANSPORT_HELP = `
 Usage: mcp-all-in-one [transport] [options]
@@ -66,11 +67,22 @@ async function main(): Promise<void> {
 
   const opts = parseArgs(process.argv);
 
+  // Surface unset / placeholder secrets at startup (values hidden).
+  reportConfig();
+
   if (opts.transport === "http") {
     if (!opts.authToken) {
-      console.error(
-        "WARNING: AUTH_TOKEN is not set. The server will accept any request. " +
-        "Set AUTH_TOKEN env var or --auth-token flag for production use."
+      throw new Error(
+        "Refusing to start the HTTP server: AUTH_TOKEN is not set. " +
+        "A remote MCP server without auth accepts ANY request. " +
+        "Set AUTH_TOKEN (env var or --auth-token) to a real random token " +
+        "(e.g. `openssl rand -hex 32`)."
+      );
+    }
+    if (isPlaceholder(opts.authToken)) {
+      throw new Error(
+        "Refusing to start the HTTP server: AUTH_TOKEN is still a placeholder " +
+        `value ("${opts.authToken}"). Set it to a real random token.`
       );
     }
     await runHttpServer({

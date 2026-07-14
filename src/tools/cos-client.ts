@@ -1,4 +1,5 @@
 import COS from "cos-nodejs-sdk-v5";
+import { getApiKey } from "../config.js";
 
 export interface CosConfig {
   secretId: string;
@@ -191,12 +192,12 @@ export function buildPublicUrl(key: string, config?: CosConfig): string {
 }
 
 export function loadConfig(): CosConfig {
-  const secretId = process.env.COS_SECRET_ID;
-  const secretKey = process.env.COS_SECRET_KEY;
+  const secretId = getApiKey("COS_SECRET_ID");
+  const secretKey = getApiKey("COS_SECRET_KEY");
   const bucket = process.env.COS_BUCKET;
   const region = process.env.COS_REGION;
   const publicHost = process.env.COS_PUBLIC_HOST;
-  if (!secretId || !secretKey || !bucket || !region) {
+  if (!bucket || !region) {
     throw new Error(
       "COS configuration missing. Set COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION."
     );

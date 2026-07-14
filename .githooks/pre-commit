@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Git pre-commit hook: scan staged content for real secrets before allowing
+# the commit. Delegates to scripts/scan-secrets.sh.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$SCRIPT_DIR/scripts/scan-secrets.sh"

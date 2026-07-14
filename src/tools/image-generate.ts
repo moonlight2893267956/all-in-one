@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Buffer } from "node:buffer";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { getApiKey } from "../config.js";
 
 const NEWAPI_MODELS = [
   "gpt-image-2",
@@ -98,8 +99,8 @@ type Provider = "newapi" | "dashscope";
 
 function pickProvider(explicit?: Provider): Provider {
   if (explicit) return explicit;
-  if (process.env.NEWAPI_API_KEY) return "newapi";
-  if (process.env.DASHSCOPE_API_KEY) return "dashscope";
+  if (getApiKey("NEWAPI_API_KEY", { allowUnset: true })) return "newapi";
+  if (getApiKey("DASHSCOPE_API_KEY", { allowUnset: true })) return "dashscope";
   throw new Error(
     "No image provider API key found. Set NEWAPI_API_KEY or DASHSCOPE_API_KEY."
   );
@@ -110,8 +111,7 @@ async function generateNewApi(
   model: string,
   size: string
 ): Promise<{ url: string; revisedPrompt?: string }> {
-  const apiKey = process.env.NEWAPI_API_KEY;
-  if (!apiKey) throw new Error("NEWAPI_API_KEY is not set");
+  const apiKey = getApiKey("NEWAPI_API_KEY");
 
   const params: Record<string, unknown> = {
     model,
@@ -161,8 +161,7 @@ async function generateDashScope(
   size: string,
   negativePrompt: string | undefined
 ): Promise<string> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
-  if (!apiKey) throw new Error("DASHSCOPE_API_KEY is not set");
+  const apiKey = getApiKey("DASHSCOPE_API_KEY");
 
   const parameters: Record<string, unknown> = {
     n: 1,

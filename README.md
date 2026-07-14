@@ -142,7 +142,7 @@ deploy/
 | `HOST` | `127.0.0.1` | HTTP transport |
 | `PORT` | `3030` | HTTP transport |
 | `MCP_ENDPOINT` | `/mcp` | HTTP transport |
-| `AUTH_TOKEN` | _(unset)_ | HTTP transport — required in production |
+| `AUTH_TOKEN` | _(unset)_ | HTTP transport — **required**; server refuses to start if unset or a placeholder |
 | `TAVILY_API_KEY` | _(unset)_ | `tavily_search` tool |
 | `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | _(unset)_ | `image_understand`, `image_generate` (fallback) |
 | `DASHSCOPE_IMAGE_MODEL` | `qwen-image-2.0-pro` | `image_generate` (provider=dashscope) |
@@ -182,6 +182,58 @@ cos_upload(local_path="foo.png", cos_key="shots/foo.png", acl="public-read")
 - **Security:** `local_path` is path-traversal guarded and confined to
   `MCP_UPLOAD_DIR`, so `cos_upload` can never read arbitrary server files
   (e.g. `/etc/mcp-all-in-one/mcp-all-in-one.env` secrets).
+
+## Security
+
+This server was written after a real incident where a real API key was
+committed into a public repo's `.env.example` history and the key got
+fraudulently used. The following guards are built in to prevent a repeat:
+
+### 1. Secrets are never read as raw `process.env.X`
+
+All secret reads go through `getApiKey()` in `src/config.ts`, which:
+
+- throws if the variable is unset (clear error instead of a silent bad call);
+- **throws if the value is still a placeholder/template** (e.g. `sk-xxx…`,
+  `your_tavily_api_key_here`, `replace-me-with-a-strong-random-token`). This
+  is the exact failure mode that caused the leak — a copied-but-unfilled
+  `.env.example` — so it now fails loudly at request time.
+
+`reportConfig()` prints a startup summary (values hidden) listing which
+secrets are `set` / `unset` / `PLACEHOLDER`, so a misconfigured deploy is
+visible immediately.
+
+### 2. HTTP mode refuses to start without a real `AUTH_TOKEN`
+
+`AUTH_TOKEN` is **required** when running `http`. If it is unset or still a
+placeholder, the server exits with an error instead of starting an
+unauthenticated endpoint. Generate one with `openssl rand -hex 32`.
+
+### 3. Pre-commit secret scanning
+
+`scripts/scan-secrets.sh` scans staged content for real-looking secrets
+(`sk-…`, `tvly-…`, `AKID…`, Langfuse, GitHub PAT, AWS). Placeholder/template
+values are intentionally ignored so committed `.env.example` files never
+block a commit.
+
+Enable the hook (one time, per clone):
+
+```bash
+npm install            # or: npm run setup-hooks
+npm run setup-hooks    # git config core.hooksPath .githooks
+npm run scan:secrets   # run manually any time
+```
+
+If you ever need to bypass it (e.g. a false positive), use
+`git commit --no-verify` — but review the matches first.
+
+### 4. Hexo tools build to the site dir via `_config.server.yml`
+
+`hexo_*` tools run `npx hexo --config _config.yml,_config.server.yml …`, so
+`generate`/clean output goes to the directory declared in
+`_config.server.yml` (`public_dir`), not the default `public/`. After changing
+tool code, **redeploy the running server** (`git pull` + `npm run build`) so it
+picks up the corrected build — the source on the server is not auto-updated.
 
 ## License
 
