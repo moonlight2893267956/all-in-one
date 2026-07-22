@@ -25,6 +25,37 @@ function newApiUrl(): string {
   return `${base}/images/generations`;
 }
 
+// Upstream image generation can be very slow (gpt-image-2 on some proxies takes
+// ~80s). Without a timeout the fetch hangs until the MCP client gives up, which
+// surfaces as an opaque "timeout". Bound it and fail with a clear message.
+const FETCH_TIMEOUT_MS = Number(process.env.IMAGE_GEN_TIMEOUT_MS ?? 120000);
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  label: string
+): Promise<Response> {
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const err = e as Error & { code?: string };
+    if (
+      err?.name === "TimeoutError" ||
+      err?.code === "ABORT_ERR" ||
+      /timeout/i.test(err?.message ?? "")
+    ) {
+      throw new Error(
+        `${label} timed out after ${Math.round(FETCH_TIMEOUT_MS / 1000)}s ` +
+          `(upstream too slow). Raise IMAGE_GEN_TIMEOUT_MS or use a faster model/size.`
+      );
+    }
+    throw e;
+  }
+}
+
 interface DashScopeResponse {
   output?: {
     choices?: Array<{
@@ -121,14 +152,18 @@ async function generateNewApi(
     response_format: "url",
   };
 
-  const resp = await fetch(newApiUrl(), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+  const resp = await fetchWithTimeout(
+    newApiUrl(),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
     },
-    body: JSON.stringify(params),
-  });
+    "NewAPI image generation"
+  );
   const result = (await resp.json()) as NewApiImageResponse;
   if (!resp.ok || result.error) {
     throw new Error(
@@ -177,14 +212,18 @@ async function generateDashScope(
     parameters,
   };
 
-  const resp = await fetch(DASHSCOPE_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+  const resp = await fetchWithTimeout(
+    DASHSCOPE_URL,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+    "DashScope image generation"
+  );
   const result = (await resp.json()) as DashScopeResponse;
   if (!resp.ok || result.error) {
     throw new Error(
@@ -289,7 +328,7 @@ export const imageGenerateTool = {
     }
 
     // Download to local filesystem
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url, {}, "generated image download");
     if (!resp.ok) {
       throw new Error(`Failed to download generated image: ${resp.status}`);
     }
