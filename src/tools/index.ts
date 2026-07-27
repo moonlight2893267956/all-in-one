@@ -11,11 +11,22 @@ import { hexoPublishTool } from "./hexo-publish.js";
 import { hexoDeleteTool } from "./hexo-delete.js";
 import { hexoRebuildTool } from "./hexo-rebuild.js";
 
+/** Context passed to tool handlers, enabling progress notifications etc. */
+export interface ToolContext {
+  /**
+   * Send a progress notification to the client.
+   * No-op when the client did not provide a progressToken.
+   * @param progress - Current step / amount completed
+   * @param total    - Total steps / amount (optional)
+   */
+  sendProgress: (progress: number, total?: number) => void;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  handler: (args: Record<string, unknown>) => Promise<string>;
+  handler: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>;
 }
 
 export const tools: ToolDefinition[] = [

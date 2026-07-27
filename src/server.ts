@@ -41,9 +41,25 @@ function createMcpServer(): Server {
       throw new Error(`Unknown tool: ${request.params.name}`);
     }
 
+    const progressToken = (request.params as { _meta?: { progressToken?: unknown } })
+      ?._meta?.progressToken as string | number | undefined;
+
+    const sendProgress = (progress: number, total?: number): void => {
+      if (progressToken == null) return;
+      server.notification({
+        method: "notifications/progress",
+        params: { progressToken, progress, ...(total != null ? { total } : {}) },
+      }).catch(() => {
+        // Swallow — the client may have disconnected; the tool should still finish.
+      });
+    };
+
+    const ctx: import("./tools/index.js").ToolContext = { sendProgress };
+
     try {
       const text = await tool.handler(
-        (request.params.arguments ?? {}) as Record<string, unknown>
+        (request.params.arguments ?? {}) as Record<string, unknown>,
+        ctx
       );
       return { content: [{ type: "text" as const, text }] };
     } catch (error) {

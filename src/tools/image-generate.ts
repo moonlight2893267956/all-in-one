@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getApiKey } from "../config.js";
+import type { ToolContext } from "./index.js";
 
 const NEWAPI_MODELS = [
   "gpt-image-2",
@@ -53,6 +54,48 @@ async function fetchWithTimeout(
       );
     }
     throw e;
+  }
+}
+
+/**
+ * Like fetchWithTimeout, but sends periodic progress notifications while
+ * waiting for the upstream response. This keeps the MCP client connection
+ * alive during long-running operations (e.g. gpt-image-2 takes 60-90s).
+ *
+ * @param ctx        Tool context (may have sendProgress)
+ * @param stepLabel  Human-readable label for the current step
+ * @param stepIndex  Current step number (for progress/total)
+ * @param totalSteps Total number of steps
+ */
+async function fetchWithProgress(
+  url: string,
+  init: RequestInit,
+  label: string,
+  ctx: ToolContext | undefined,
+  stepLabel: string,
+  stepIndex: number,
+  totalSteps: number
+): Promise<Response> {
+  // Send an initial progress notification immediately
+  ctx?.sendProgress(stepIndex, totalSteps);
+
+  // Set up a heartbeat interval that sends progress every 10s while the
+  // fetch is in-flight. This prevents the MCP client from timing out due
+  // to inactivity on the Streamable HTTP connection.
+  const PROGRESS_INTERVAL_MS = 10_000;
+  let elapsed = 0;
+  const heartbeat = setInterval(() => {
+    elapsed += PROGRESS_INTERVAL_MS;
+    ctx?.sendProgress(stepIndex, totalSteps);
+  }, PROGRESS_INTERVAL_MS);
+  // Don't let the timer prevent process exit
+  if (heartbeat.unref) heartbeat.unref();
+
+  try {
+    const resp = await fetchWithTimeout(url, init, label);
+    return resp;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -140,7 +183,9 @@ function pickProvider(explicit?: Provider): Provider {
 async function generateNewApi(
   prompt: string,
   model: string,
-  size: string
+  size: string,
+  ctx?: ToolContext,
+  totalSteps?: number
 ): Promise<{ url: string; revisedPrompt?: string }> {
   const apiKey = getApiKey("NEWAPI_API_KEY");
 
@@ -152,7 +197,7 @@ async function generateNewApi(
     response_format: "url",
   };
 
-  const resp = await fetchWithTimeout(
+  const resp = await fetchWithProgress(
     newApiUrl(),
     {
       method: "POST",
@@ -162,7 +207,11 @@ async function generateNewApi(
       },
       body: JSON.stringify(params),
     },
-    "NewAPI image generation"
+    "NewAPI image generation",
+    ctx,
+    "Generating image via NewAPI",
+    1,
+    totalSteps ?? 4
   );
   const result = (await resp.json()) as NewApiImageResponse;
   if (!resp.ok || result.error) {
@@ -194,7 +243,9 @@ async function generateDashScope(
   prompt: string,
   model: string,
   size: string,
-  negativePrompt: string | undefined
+  negativePrompt: string | undefined,
+  ctx?: ToolContext,
+  totalSteps?: number
 ): Promise<string> {
   const apiKey = getApiKey("DASHSCOPE_API_KEY");
 
@@ -212,7 +263,7 @@ async function generateDashScope(
     parameters,
   };
 
-  const resp = await fetchWithTimeout(
+  const resp = await fetchWithProgress(
     DASHSCOPE_URL,
     {
       method: "POST",
@@ -222,7 +273,11 @@ async function generateDashScope(
       },
       body: JSON.stringify(payload),
     },
-    "DashScope image generation"
+    "DashScope image generation",
+    ctx,
+    "Generating image via DashScope",
+    1,
+    totalSteps ?? 4
   );
   const result = (await resp.json()) as DashScopeResponse;
   if (!resp.ok || result.error) {
@@ -300,7 +355,7 @@ export const imageGenerateTool = {
     },
     required: ["prompt"],
   },
-  handler: async (args: Record<string, unknown>) => {
+  handler: async (args: Record<string, unknown>, ctx?: ToolContext) => {
     const parsed = InputSchema.parse(args);
     const provider = pickProvider(parsed.provider);
 
@@ -312,10 +367,13 @@ export const imageGenerateTool = {
           : process.env.DASHSCOPE_IMAGE_MODEL ?? "qwen-image-2.0-pro";
     }
 
+    // Total steps: 1=generate, 2=download, 3=save, 4=upload-to-COS
+    const TOTAL_STEPS = 4;
+
     let url: string;
     let revisedPrompt: string | undefined;
     if (provider === "newapi") {
-      const r = await generateNewApi(parsed.prompt, model, parsed.size);
+      const r = await generateNewApi(parsed.prompt, model, parsed.size, ctx, TOTAL_STEPS);
       url = r.url;
       revisedPrompt = r.revisedPrompt;
     } else {
@@ -323,11 +381,14 @@ export const imageGenerateTool = {
         parsed.prompt,
         model,
         parsed.size,
-        parsed.negative_prompt
+        parsed.negative_prompt,
+        ctx,
+        TOTAL_STEPS
       );
     }
 
     // Download to local filesystem
+    ctx?.sendProgress(2, TOTAL_STEPS);
     const resp = await fetchWithTimeout(url, {}, "generated image download");
     if (!resp.ok) {
       throw new Error(`Failed to download generated image: ${resp.status}`);
@@ -339,6 +400,7 @@ export const imageGenerateTool = {
     const saveTo = parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.${ext}`;
     await mkdir(dirname(saveTo), { recursive: true });
     await writeFile(saveTo, buf);
+    ctx?.sendProgress(3, TOTAL_STEPS);
 
     const lines: string[] = [
       `Provider: ${provider}`,
@@ -364,6 +426,7 @@ export const imageGenerateTool = {
     } else {
       lines.push(`(upload_to_cos=false; COS upload skipped)`);
     }
+    ctx?.sendProgress(4, TOTAL_STEPS);
 
     return lines.join("\n");
   },
