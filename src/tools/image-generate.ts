@@ -2,8 +2,8 @@ import { z } from "zod";
 import { Buffer } from "node:buffer";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { getApiKey } from "../config.js";
-import type { ToolContext } from "./index.js";
 
 const NEWAPI_MODELS = [
   "gpt-image-2",
@@ -54,48 +54,6 @@ async function fetchWithTimeout(
       );
     }
     throw e;
-  }
-}
-
-/**
- * Like fetchWithTimeout, but sends periodic progress notifications while
- * waiting for the upstream response. This keeps the MCP client connection
- * alive during long-running operations (e.g. gpt-image-2 takes 60-90s).
- *
- * @param ctx        Tool context (may have sendProgress)
- * @param stepLabel  Human-readable label for the current step
- * @param stepIndex  Current step number (for progress/total)
- * @param totalSteps Total number of steps
- */
-async function fetchWithProgress(
-  url: string,
-  init: RequestInit,
-  label: string,
-  ctx: ToolContext | undefined,
-  stepLabel: string,
-  stepIndex: number,
-  totalSteps: number
-): Promise<Response> {
-  // Send an initial progress notification immediately
-  ctx?.sendProgress(stepIndex, totalSteps);
-
-  // Set up a heartbeat interval that sends progress every 10s while the
-  // fetch is in-flight. This prevents the MCP client from timing out due
-  // to inactivity on the Streamable HTTP connection.
-  const PROGRESS_INTERVAL_MS = 10_000;
-  let elapsed = 0;
-  const heartbeat = setInterval(() => {
-    elapsed += PROGRESS_INTERVAL_MS;
-    ctx?.sendProgress(stepIndex, totalSteps);
-  }, PROGRESS_INTERVAL_MS);
-  // Don't let the timer prevent process exit
-  if (heartbeat.unref) heartbeat.unref();
-
-  try {
-    const resp = await fetchWithTimeout(url, init, label);
-    return resp;
-  } finally {
-    clearInterval(heartbeat);
   }
 }
 
@@ -180,12 +138,149 @@ function pickProvider(explicit?: Provider): Provider {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Async task store
+// ---------------------------------------------------------------------------
+
+export interface ImageTask {
+  id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  createdAt: number;
+  updatedAt: number;
+  /** Human-readable progress message */
+  progress: string;
+  /** Full result text when completed */
+  result?: string;
+  /** Error message when failed */
+  error?: string;
+}
+
+const TASK_TTL_MS = 30 * 60 * 1000; // 30 min
+const taskStore = new Map<string, ImageTask>();
+
+// Periodic cleanup of expired tasks
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, task] of taskStore) {
+    if (now - task.updatedAt > TASK_TTL_MS) {
+      taskStore.delete(id);
+    }
+  }
+}, 60_000).unref();
+
+function createTask(): ImageTask {
+  const task: ImageTask = {
+    id: randomUUID(),
+    status: "pending",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    progress: "Task created, waiting to start...",
+  };
+  taskStore.set(task.id, task);
+  return task;
+}
+
+function updateTask(
+  task: ImageTask,
+  patch: Partial<Pick<ImageTask, "status" | "progress" | "result" | "error">>
+): void {
+  Object.assign(task, patch, { updatedAt: Date.now() });
+}
+
+// ---------------------------------------------------------------------------
+// Core generation logic (runs in background)
+// ---------------------------------------------------------------------------
+
+async function runGeneration(
+  task: ImageTask,
+  parsed: z.infer<typeof InputSchema>
+): Promise<void> {
+  const provider = pickProvider(parsed.provider);
+
+  let model = parsed.model;
+  if (!model) {
+    model =
+      provider === "newapi"
+        ? process.env.NEWAPI_IMAGE_MODEL ?? "gpt-image-2"
+        : process.env.DASHSCOPE_IMAGE_MODEL ?? "qwen-image-2.0-pro";
+  }
+
+  try {
+    updateTask(task, { status: "processing", progress: `Generating image via ${provider} (${model})...` });
+
+    // Step 1: Call upstream API
+    let url: string;
+    let revisedPrompt: string | undefined;
+    if (provider === "newapi") {
+      const r = await generateNewApi(parsed.prompt, model, parsed.size);
+      url = r.url;
+      revisedPrompt = r.revisedPrompt;
+    } else {
+      url = await generateDashScope(parsed.prompt, model, parsed.size, parsed.negative_prompt);
+    }
+
+    // Step 2: Download image
+    updateTask(task, { progress: "Downloading generated image..." });
+    const resp = await fetchWithTimeout(url, {}, "generated image download");
+    if (!resp.ok) {
+      throw new Error(`Failed to download generated image: ${resp.status}`);
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+
+    // Step 3: Save to local filesystem
+    updateTask(task, { progress: "Saving image to disk..." });
+    const fallbackName = parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.png`;
+    const ext = guessImageExtension(resp.headers.get("content-type"), fallbackName);
+    const saveTo = parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.${ext}`;
+    await mkdir(dirname(saveTo), { recursive: true });
+    await writeFile(saveTo, buf);
+
+    // Step 4: Build result
+    const lines: string[] = [
+      `Provider: ${provider}`,
+      `Model: ${model}`,
+      `Prompt: ${parsed.prompt.slice(0, 200)}${parsed.prompt.length > 200 ? "..." : ""}`,
+      `Size: ${(buf.length / 1024).toFixed(1)} KB`,
+      `Saved to: ${saveTo}`,
+    ];
+    if (revisedPrompt) {
+      lines.push(`Revised prompt: ${revisedPrompt}`);
+    }
+
+    // Step 5: Upload to COS (if requested)
+    if (parsed.upload_to_cos) {
+      updateTask(task, { progress: "Uploading to COS..." });
+      const { cosKey, publicUrl, acl } = await uploadToCos(
+        buf,
+        saveTo,
+        parsed.cos_key,
+        parsed.cos_acl
+      );
+      lines.push(`COS key: ${cosKey}`);
+      lines.push(`COS ACL: ${acl}`);
+      lines.push(`COS URL: ${publicUrl}`);
+    } else {
+      lines.push(`(upload_to_cos=false; COS upload skipped)`);
+    }
+
+    updateTask(task, { status: "completed", progress: "Done", result: lines.join("\n") });
+  } catch (err) {
+    updateTask(task, {
+      status: "failed",
+      progress: "Failed",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Upstream API helpers (synchronous, no progress — called from background task)
+// ---------------------------------------------------------------------------
+
 async function generateNewApi(
   prompt: string,
   model: string,
-  size: string,
-  ctx?: ToolContext,
-  totalSteps?: number
+  size: string
 ): Promise<{ url: string; revisedPrompt?: string }> {
   const apiKey = getApiKey("NEWAPI_API_KEY");
 
@@ -197,7 +292,7 @@ async function generateNewApi(
     response_format: "url",
   };
 
-  const resp = await fetchWithProgress(
+  const resp = await fetchWithTimeout(
     newApiUrl(),
     {
       method: "POST",
@@ -207,11 +302,7 @@ async function generateNewApi(
       },
       body: JSON.stringify(params),
     },
-    "NewAPI image generation",
-    ctx,
-    "Generating image via NewAPI",
-    1,
-    totalSteps ?? 4
+    "NewAPI image generation"
   );
   const result = (await resp.json()) as NewApiImageResponse;
   if (!resp.ok || result.error) {
@@ -243,9 +334,7 @@ async function generateDashScope(
   prompt: string,
   model: string,
   size: string,
-  negativePrompt: string | undefined,
-  ctx?: ToolContext,
-  totalSteps?: number
+  negativePrompt: string | undefined
 ): Promise<string> {
   const apiKey = getApiKey("DASHSCOPE_API_KEY");
 
@@ -263,7 +352,7 @@ async function generateDashScope(
     parameters,
   };
 
-  const resp = await fetchWithProgress(
+  const resp = await fetchWithTimeout(
     DASHSCOPE_URL,
     {
       method: "POST",
@@ -273,11 +362,7 @@ async function generateDashScope(
       },
       body: JSON.stringify(payload),
     },
-    "DashScope image generation",
-    ctx,
-    "Generating image via DashScope",
-    1,
-    totalSteps ?? 4
+    "DashScope image generation"
   );
   const result = (await resp.json()) as DashScopeResponse;
   if (!resp.ok || result.error) {
@@ -296,15 +381,47 @@ async function generateDashScope(
   return url;
 }
 
+async function uploadToCos(
+  buf: Buffer,
+  saveTo: string,
+  cosKeyOverride: string | undefined,
+  acl: "private" | "public-read"
+): Promise<{ cosKey: string; publicUrl: string; acl: string }> {
+  const { cosUploadBuffer, buildPublicUrl } = await import("./cos-client.js");
+  const cosKey =
+    cosKeyOverride ?? `mcp-images/${saveTo.split("/").pop() ?? "image.png"}`;
+  const r = await cosUploadBuffer(buf, cosKey, undefined, undefined, { acl });
+  return { cosKey, publicUrl: buildPublicUrl(cosKey), acl: r.acl };
+}
+
+function guessImageExtension(
+  contentType: string | null,
+  fallbackPath: string
+): string {
+  if (contentType) {
+    if (contentType.includes("jpeg")) return "jpg";
+    if (contentType.includes("png")) return "png";
+    if (contentType.includes("webp")) return "webp";
+    if (contentType.includes("gif")) return "gif";
+  }
+  const m = fallbackPath.match(/\.([a-zA-Z0-9]+)$/);
+  return m ? m[1].toLowerCase() : "png";
+}
+
+// ---------------------------------------------------------------------------
+// MCP tool definitions
+// ---------------------------------------------------------------------------
+
 export const imageGenerateTool = {
   name: "image_generate",
   description:
-    "Generate an image from a text prompt. Default provider is newapi (gpt-image-2, " +
-    "OpenAI-compatible endpoint, default base https://ai.centos.hk/v1, override with " +
-    "NEWAPI_BASE_URL env var); falls back to DashScope (qwen-image, wan2.7) when " +
-    "NEWAPI_API_KEY is unset. The image is downloaded " +
-    "to the server filesystem at save_to (default /tmp/mcp-images/) and its path is returned. " +
-    "Optionally also uploads to COS (upload_to_cos=true) and returns the public/presigned URL.",
+    "Generate an image from a text prompt (ASYNC). Returns a taskId immediately; " +
+    "use image_status to poll for completion and get the result (COS URL, file path, etc.). " +
+    "Default provider is newapi (gpt-image-2, OpenAI-compatible endpoint, default base " +
+    "https://ai.centos.hk/v1, override with NEWAPI_BASE_URL env var); falls back to " +
+    "DashScope (qwen-image, wan2.7) when NEWAPI_API_KEY is unset. " +
+    "The image is downloaded to the server filesystem at save_to (default /tmp/mcp-images/) " +
+    "and optionally uploaded to COS (upload_to_cos=true, default) returning the public URL.",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -355,106 +472,75 @@ export const imageGenerateTool = {
     },
     required: ["prompt"],
   },
-  handler: async (args: Record<string, unknown>, ctx?: ToolContext) => {
+  handler: async (args: Record<string, unknown>) => {
     const parsed = InputSchema.parse(args);
-    const provider = pickProvider(parsed.provider);
+    const task = createTask();
 
-    let model = parsed.model;
-    if (!model) {
-      model =
-        provider === "newapi"
-          ? process.env.NEWAPI_IMAGE_MODEL ?? "gpt-image-2"
-          : process.env.DASHSCOPE_IMAGE_MODEL ?? "qwen-image-2.0-pro";
+    // Fire-and-forget: run generation in background
+    // Use setImmediate to ensure the handler returns immediately
+    setImmediate(() => {
+      void runGeneration(task, parsed);
+    });
+
+    return [
+      `Task created: ${task.id}`,
+      `Status: pending`,
+      `Prompt: ${parsed.prompt.slice(0, 100)}${parsed.prompt.length > 100 ? "..." : ""}`,
+      ``,
+      `Image generation is running in the background.`,
+      `Call image_status with taskId="${task.id}" to check progress and get the result.`,
+    ].join("\n");
+  },
+};
+
+export const imageStatusTool = {
+  name: "image_status",
+  description:
+    "Check the status of an async image_generate task. Returns the current status " +
+    "(pending/processing/completed/failed), progress message, and the full result " +
+    "(including COS URL and file path) when completed. Poll every 10-15 seconds until done.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      task_id: {
+        type: "string",
+        description: "The taskId returned by image_generate",
+      },
+    },
+    required: ["task_id"],
+  },
+  handler: async (args: Record<string, unknown>) => {
+    const taskId = args.task_id as string;
+    if (!taskId) {
+      throw new Error("task_id is required");
     }
 
-    // Total steps: 1=generate, 2=download, 3=save, 4=upload-to-COS
-    const TOTAL_STEPS = 4;
-
-    let url: string;
-    let revisedPrompt: string | undefined;
-    if (provider === "newapi") {
-      const r = await generateNewApi(parsed.prompt, model, parsed.size, ctx, TOTAL_STEPS);
-      url = r.url;
-      revisedPrompt = r.revisedPrompt;
-    } else {
-      url = await generateDashScope(
-        parsed.prompt,
-        model,
-        parsed.size,
-        parsed.negative_prompt,
-        ctx,
-        TOTAL_STEPS
+    const task = taskStore.get(taskId);
+    if (!task) {
+      throw new Error(
+        `Task not found: ${taskId}. It may have expired (TTL 30 min) or never existed.`
       );
     }
-
-    // Download to local filesystem
-    ctx?.sendProgress(2, TOTAL_STEPS);
-    const resp = await fetchWithTimeout(url, {}, "generated image download");
-    if (!resp.ok) {
-      throw new Error(`Failed to download generated image: ${resp.status}`);
-    }
-    const buf = Buffer.from(await resp.arrayBuffer());
-
-    const fallbackName = parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.png`;
-    const ext = guessImageExtension(resp.headers.get("content-type"), fallbackName);
-    const saveTo = parsed.save_to ?? `${DEFAULT_OUTPUT_DIR}/${Date.now()}.${ext}`;
-    await mkdir(dirname(saveTo), { recursive: true });
-    await writeFile(saveTo, buf);
-    ctx?.sendProgress(3, TOTAL_STEPS);
 
     const lines: string[] = [
-      `Provider: ${provider}`,
-      `Model: ${model}`,
-      `Prompt: ${parsed.prompt.slice(0, 200)}${parsed.prompt.length > 200 ? "..." : ""}`,
-      `Size: ${(buf.length / 1024).toFixed(1)} KB`,
-      `Saved to: ${saveTo}`,
+      `Task: ${task.id}`,
+      `Status: ${task.status}`,
+      `Progress: ${task.progress}`,
+      `Elapsed: ${Math.round((Date.now() - task.createdAt) / 1000)}s`,
     ];
-    if (revisedPrompt) {
-      lines.push(`Revised prompt: ${revisedPrompt}`);
+
+    if (task.status === "completed" && task.result) {
+      lines.push("");
+      lines.push("--- Result ---");
+      lines.push(task.result);
     }
 
-    if (parsed.upload_to_cos) {
-      const { cosKey, publicUrl, acl } = await uploadToCos(
-        buf,
-        saveTo,
-        parsed.cos_key,
-        parsed.cos_acl
-      );
-      lines.push(`COS key: ${cosKey}`);
-      lines.push(`COS ACL: ${acl}`);
-      lines.push(`COS URL: ${publicUrl}`);
-    } else {
-      lines.push(`(upload_to_cos=false; COS upload skipped)`);
+    if (task.status === "failed" && task.error) {
+      lines.push("");
+      lines.push("--- Error ---");
+      lines.push(task.error);
     }
-    ctx?.sendProgress(4, TOTAL_STEPS);
 
     return lines.join("\n");
   },
 };
-
-async function uploadToCos(
-  buf: Buffer,
-  saveTo: string,
-  cosKeyOverride: string | undefined,
-  acl: "private" | "public-read"
-): Promise<{ cosKey: string; publicUrl: string; acl: string }> {
-  const { cosUploadBuffer, buildPublicUrl } = await import("./cos-client.js");
-  const cosKey =
-    cosKeyOverride ?? `mcp-images/${saveTo.split("/").pop() ?? "image.png"}`;
-  const r = await cosUploadBuffer(buf, cosKey, undefined, undefined, { acl });
-  return { cosKey, publicUrl: buildPublicUrl(cosKey), acl: r.acl };
-}
-
-function guessImageExtension(
-  contentType: string | null,
-  fallbackPath: string
-): string {
-  if (contentType) {
-    if (contentType.includes("jpeg")) return "jpg";
-    if (contentType.includes("png")) return "png";
-    if (contentType.includes("webp")) return "webp";
-    if (contentType.includes("gif")) return "gif";
-  }
-  const m = fallbackPath.match(/\.([a-zA-Z0-9]+)$/);
-  return m ? m[1].toLowerCase() : "png";
-}

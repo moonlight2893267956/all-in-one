@@ -1,7 +1,7 @@
 import { tavilySearchTool } from "./tavily-search.js";
 import { currentDateTool } from "./current-date.js";
 import { imageUnderstandTool } from "./image-understand.js";
-import { imageGenerateTool } from "./image-generate.js";
+import { imageGenerateTool, imageStatusTool } from "./image-generate.js";
 import { cosUploadTool, cosUploadChunkedTool } from "./cos-upload.js";
 import { cosDownloadTool } from "./cos-download.js";
 import { cosListTool } from "./cos-list.js";
@@ -11,22 +11,11 @@ import { hexoPublishTool } from "./hexo-publish.js";
 import { hexoDeleteTool } from "./hexo-delete.js";
 import { hexoRebuildTool } from "./hexo-rebuild.js";
 
-/** Context passed to tool handlers, enabling progress notifications etc. */
-export interface ToolContext {
-  /**
-   * Send a progress notification to the client.
-   * No-op when the client did not provide a progressToken.
-   * @param progress - Current step / amount completed
-   * @param total    - Total steps / amount (optional)
-   */
-  sendProgress: (progress: number, total?: number) => void;
-}
-
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  handler: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>;
+  handler: (args: Record<string, unknown>) => Promise<string>;
 }
 
 export const tools: ToolDefinition[] = [
@@ -34,6 +23,7 @@ export const tools: ToolDefinition[] = [
   currentDateTool,
   imageUnderstandTool,
   imageGenerateTool,
+  imageStatusTool,
   cosUploadTool,
   cosUploadChunkedTool,
   cosDownloadTool,
