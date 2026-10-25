@@ -1,6 +1,5 @@
 import { tavilySearchTool } from "./tavily-search.js";
 import { currentDateTool } from "./current-date.js";
-import { imageUnderstandTool } from "./image-understand.js";
 import { imageGenerateTool, imageStatusTool } from "./image-generate.js";
 import { cosUploadTool, cosUploadChunkedTool } from "./cos-upload.js";
 import { cosDownloadTool } from "./cos-download.js";
@@ -21,7 +20,6 @@ export interface ToolDefinition {
 export const tools: ToolDefinition[] = [
   tavilySearchTool,
   currentDateTool,
-  imageUnderstandTool,
   imageGenerateTool,
   imageStatusTool,
   cosUploadTool,

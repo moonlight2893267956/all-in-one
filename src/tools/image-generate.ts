@@ -5,18 +5,6 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getApiKey } from "../config.js";
 
-const NEWAPI_MODELS = [
-  "gpt-image-2",
-  "gpt-image-1",
-  "dall-e-3",
-  "dall-e-2",
-] as const;
-
-const DASHSCOPE_IMAGE_MODELS = [
-  "qwen-image-2.0-pro",
-  "wan2.7-image-pro",
-] as const;
-
 const NEWAPI_DEFAULT_BASE_URL = "https://ai.centos.hk/v1";
 const DASHSCOPE_URL =
   "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
@@ -87,9 +75,7 @@ const InputSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Model name. Defaults to gpt-image-2 (newapi) or qwen-image-2.0-pro (dashscope). " +
-        "Provider-specific valid models: newapi (OpenAI-compatible): gpt-image-2, gpt-image-1, " +
-        "dall-e-3, dall-e-2; dashscope: qwen-image-2.0-pro, wan2.7-image-pro."
+      "Model name. Defaults to gpt-image-2 (from NEWAPI_IMAGE_MODEL env var)."
     ),
   size: z
     .string()
@@ -417,9 +403,8 @@ export const imageGenerateTool = {
   description:
     "Generate an image from a text prompt (ASYNC). Returns a taskId immediately; " +
     "use image_status to poll for completion and get the result (COS URL, file path, etc.). " +
-    "Default provider is newapi (gpt-image-2, OpenAI-compatible endpoint, default base " +
-    "https://ai.centos.hk/v1, override with NEWAPI_BASE_URL env var); falls back to " +
-    "DashScope (qwen-image, wan2.7) when NEWAPI_API_KEY is unset. " +
+    "Uses the newapi provider with gpt-image-2 by default (OpenAI-compatible endpoint, " +
+    "default base https://ai.centos.hk/v1, override with NEWAPI_BASE_URL env var). " +
     "The image is downloaded to the server filesystem at save_to (default /tmp/mcp-images/) " +
     "and optionally uploaded to COS (upload_to_cos=true, default) returning the public URL.",
   inputSchema: {
@@ -436,7 +421,7 @@ export const imageGenerateTool = {
       model: {
         type: "string",
         description:
-          "Model name. Defaults to gpt-image-2 (newapi) or qwen-image-2.0-pro (dashscope).",
+          "Model name. Defaults to gpt-image-2 (from NEWAPI_IMAGE_MODEL env var).",
       },
       size: {
         type: "string",

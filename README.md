@@ -15,8 +15,7 @@ Supports two transports:
 | --- | --- |
 | `tavily_search` | Web search via the Tavily API (basic / advanced depth, optional AI summary) |
 | `current_date` | Returns the current date / time / timestamp in a configurable IANA timezone |
-| `image_understand` | Vision-language understanding of an image (DashScope qwen3-vl-flash / qwen-vl-plus / qwen-vl-max) |
-| `image_generate` | Text-to-image generation (NewAPI gpt-image-2 default; DashScope qwen-image/wan2.7 fallback) |
+| `image_generate` | Text-to-image generation (NewAPI gpt-image-2, async task + `image_status` polling) |
 | `cos_upload` | Upload a file, base64, or text blob to Tencent Cloud COS (see "Uploading local files") |
 | `cos_upload_chunked` | Upload a (large) file via chunked base64 — **no scp/SSH needed**; call once per small chunk, `final=true` on the last |
 | `cos_download` | Download a COS object to the server filesystem |
@@ -144,7 +143,7 @@ deploy/
 | `MCP_ENDPOINT` | `/mcp` | HTTP transport |
 | `AUTH_TOKEN` | _(unset)_ | HTTP transport — **required**; server refuses to start if unset or a placeholder |
 | `TAVILY_API_KEY` | _(unset)_ | `tavily_search` tool |
-| `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | _(unset)_ | `image_understand`, `image_generate` (fallback) |
+| `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | _(unset)_ | `image_generate` (provider=dashscope only) |
 | `DASHSCOPE_IMAGE_MODEL` | `qwen-image-2.0-pro` | `image_generate` (provider=dashscope) |
 | `NEWAPI_API_KEY` | _(unset)_ | `image_generate` (provider=newapi, default) |
 | `NEWAPI_BASE_URL` | `https://ai.centos.hk/v1` | `image_generate` (provider=newapi) |
