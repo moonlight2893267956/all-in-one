@@ -52,23 +52,37 @@ jobs:
 
             echo ">>> install + build"
             # 注意：build 用的是 tsc（devDependency），必须完整安装，不能 --omit=dev
-            npm ci
+            npm ci --include=dev
             npm run build
+            # 产物必须存在，否则后面 restart 会静默失败（PM2 起不来且看不出原因）
+            test -f build/index.js || { echo "!! build/index.js missing after build" >&2; exit 1; }
             npm prune --omit=dev   # 构建完后剔除 dev 依赖，保持运行时精简
 
             echo ">>> restart (pm2)"
+            # PM2 守护进程可能因机器重启而丢失进程列表，此时 describe 返回非 0。
+            # 先确保守护进程在线，再按需 restart 或 start；任一步失败都不让 set -e 误杀。
+            pm2 ping >/dev/null 2>&1 || pm2 resurrect >/dev/null 2>&1 || true
             if pm2 describe mcp-all-in-one >/dev/null 2>&1; then
+              echo "    restarting existing app"
               pm2 restart mcp-all-in-one
             else
+              echo "    starting new app (PM2 process list was empty)"
               pm2 start ecosystem.config.cjs
-              pm2 save
             fi
+            pm2 save
 
             echo ">>> health (等待进程监听，最多 20s)"
+            health_ok=0
             for i in $(seq 1 20); do
               if curl -fsS "http://127.0.0.1:${PORT:-3030}/health"; then
                 echo " <- health OK"
+                health_ok=1
                 break
               fi
               sleep 1
             done
+            if [ "$health_ok" -ne 1 ]; then
+              echo "!! health check failed after 20s" >&2
+              pm2 logs mcp-all-in-one --lines 30 --nostream 2>&1 | tail -30 >&2 || true
+              exit 1
+            fi
